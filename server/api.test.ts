@@ -725,7 +725,7 @@ describe('auth and invoices', () => {
     expect(drafted.body.html).toContain('STATE BANK OF INDIA');
     expect(drafted.body.html).toContain('&lt;b&gt;soon&lt;/b&gt;');
     expect(reminderPrompts).toEqual([
-      { buyerName: 'Antwerp Gems BVBA', contactPerson: 'Marc Rosenfeld', exporterName: 'xyz LLC', tone: 'gentle' },
+      { buyerName: 'Antwerp Gems BVBA', contactPerson: 'Marc Rosenfeld', exporterName: 'Meridian Diamond Exports', tone: 'gentle' },
     ]);
 
     reminderDrafter = async () => ({
