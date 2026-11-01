@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import type { Express, Request, Response } from 'express';
-import type { DbPool } from './db';
+import type { DbPool } from './db.js';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MIN_PASSWORD_LENGTH = 8;

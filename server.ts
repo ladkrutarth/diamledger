@@ -2,9 +2,9 @@ import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { applySchemaWithRetry, createPool } from './server/db';
-import { createApp } from './server/app';
-import { seedDemoUser } from './server/seed';
+import { applySchemaWithRetry, createPool } from './server/db.js';
+import { createApp } from './server/app.js';
+import { seedDemoUser } from './server/seed.js';
 
 dotenv.config();
 

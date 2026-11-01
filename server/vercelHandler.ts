@@ -17,9 +17,9 @@ function getApp(): Promise<Express> {
       if (!process.env.DATABASE_URL || !process.env.SESSION_SECRET) {
         return errorApp('Set DATABASE_URL and SESSION_SECRET in the Vercel project settings, then redeploy.');
       }
-      const { createPool, applySchema } = await import('./db');
-      const { createApp } = await import('./app');
-      const { seedDemoUser } = await import('./seed');
+      const { createPool, applySchema } = await import('./db.js');
+      const { createApp } = await import('./app.js');
+      const { seedDemoUser } = await import('./seed.js');
       const pool = createPool();
       await applySchema(pool);
       await seedDemoUser(pool);

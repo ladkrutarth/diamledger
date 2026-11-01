@@ -5,8 +5,8 @@ import pg from 'pg';
 import request from 'supertest';
 import EmbeddedPostgres from 'embedded-postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { createApp } from './app';
-import { applySchema, type DbPool } from './db';
+import { createApp } from './app.js';
+import { applySchema, type DbPool } from './db.js';
 
 const port = 54329;
 const databaseDir = path.join(os.tmpdir(), `diamondx-pg-${process.pid}`);

@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import type { DbPool } from './db';
+import type { DbPool } from './db.js';
 
 export async function seedDemoUser(pool: DbPool): Promise<void> {
   const passwordHash = await bcrypt.hash('password123', 10);

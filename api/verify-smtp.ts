@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { handleApi } from '../server/vercelHandler';
+import { handleApi } from '../server/vercelHandler.js';
 
 export default function handler(req: IncomingMessage, res: ServerResponse): void {
   handleApi(req, res, '/api/verify-smtp');

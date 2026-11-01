@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import nodemailer from 'nodemailer';
 import { GoogleGenAI, Type } from '@google/genai';
-import { requireUser } from './auth';
+import { requireUser } from './auth.js';
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,

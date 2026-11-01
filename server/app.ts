@@ -1,11 +1,11 @@
 import express, { type Express } from 'express';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
-import type { DbPool } from './db';
-import { registerAuthRoutes } from './auth';
-import { registerInvoiceRoutes } from './invoices';
-import { registerLegacyRoutes } from './legacyRoutes';
-import './types';
+import type { DbPool } from './db.js';
+import { registerAuthRoutes } from './auth.js';
+import { registerInvoiceRoutes } from './invoices.js';
+import { registerLegacyRoutes } from './legacyRoutes.js';
+import './types.js';
 
 const PgSession = connectPgSimple(session);
 

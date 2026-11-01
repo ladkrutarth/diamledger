@@ -1,7 +1,7 @@
 import type { Express } from 'express';
-import type { DbPool } from './db';
-import { isUuid, parseInvoice } from './invoiceValidation';
-import { requireUser } from './auth';
+import type { DbPool } from './db.js';
+import { isUuid, parseInvoice } from './invoiceValidation.js';
+import { requireUser } from './auth.js';
 
 type InvoiceRow = {
   id: string;
