@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { api, errorMessage, sendJson, type Role, type TeamMember } from '../../api/client';
-import { Card, Field, Notice, Page, dangerButton, inputClass, primaryButton } from '../ui';
+import { ROLE_LABEL, api, errorMessage, sendJson, type OutsideAccountant, type Role, type TeamMember } from '../../api/client';
+import { Card, Field, Notice, Page, dangerButton, inputClass, primaryButton, secondaryButton } from '../ui';
 
 interface Props {
   currentUserId: string;
@@ -68,7 +68,7 @@ export const TeamPage: React.FC<Props> = ({ currentUserId }) => {
   return (
     <Page
       title="Team"
-      description="Admins manage the company profile, team, deletions, and cancellations. Members create and issue invoices."
+      description="Admins manage the company. Members run the export desk. A tax accountant prepares the GST register. A chartered accountant reviews the books and can close a month."
     >
       {message && <Notice tone={message.tone}>{message.text}</Notice>}
 
@@ -94,8 +94,11 @@ export const TeamPage: React.FC<Props> = ({ currentUserId }) => {
               onChange={(event) => setRole(event.target.value as Role)}
               className={inputClass}
             >
-              <option value="member">Member</option>
-              <option value="admin">Admin</option>
+              {(Object.keys(ROLE_LABEL) as Role[]).map((value) => (
+                <option key={value} value={value}>
+                  {ROLE_LABEL[value]}
+                </option>
+              ))}
             </select>
           </div>
           <button type="submit" disabled={busy} className={`${primaryButton} justify-center py-2`}>
@@ -125,8 +128,11 @@ export const TeamPage: React.FC<Props> = ({ currentUserId }) => {
                     onChange={(event) => changeRole(member, event.target.value as Role)}
                     className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs"
                   >
-                    <option value="member">Member</option>
-                    <option value="admin">Admin</option>
+                    {(Object.keys(ROLE_LABEL) as Role[]).map((value) => (
+                      <option key={value} value={value}>
+                        {ROLE_LABEL[value]}
+                      </option>
+                    ))}
                   </select>
                   {member.id !== currentUserId && (
                     <button type="button" onClick={() => remove(member)} className={dangerButton}>
@@ -139,6 +145,93 @@ export const TeamPage: React.FC<Props> = ({ currentUserId }) => {
           </ul>
         )}
       </Card>
+
+      <OutsideAccountants />
     </Page>
+  );
+};
+
+const OutsideAccountants: React.FC = () => {
+  const [accountants, setAccountants] = useState<OutsideAccountant[] | null>(null);
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState<'ca' | 'tax'>('ca');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const load = () =>
+    api<{ accountants: OutsideAccountant[] }>('/api/team/accountants')
+      .then((result) => setAccountants(result.accountants))
+      .catch((err) => setError(errorMessage(err, 'Could not load outside accountants.')));
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const grant = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      await api('/api/team/accountants', sendJson('POST', { email, role }));
+      setEmail('');
+      await load();
+    } catch (err) {
+      setError(errorMessage(err, 'Could not give access.'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async (accountant: OutsideAccountant) => {
+    if (!window.confirm(`Remove ${accountant.email}'s access to this company?`)) return;
+    setError('');
+    try {
+      await api(`/api/team/accountants/${accountant.userId}`, sendJson('DELETE'));
+      await load();
+    } catch (err) {
+      setError(errorMessage(err, 'Could not remove access.'));
+    }
+  };
+
+  return (
+    <Card title="Outside accountants">
+      <p className="text-sm text-slate-600 mb-3">
+        Give your CA firm access without adding them to your team. They keep their own login, switch between all the companies they look
+        after, and see every company's due dates in one calendar. They must already have an account here.
+      </p>
+      {error && <Notice tone="error">{error}</Notice>}
+      <form onSubmit={grant} className="flex flex-wrap items-end gap-3">
+        <div className="min-w-[240px] flex-1">
+          <Field label="Accountant's email" type="email" value={email} onChange={setEmail} required />
+        </div>
+        <label className="text-[11px] font-semibold text-slate-600">
+          Access
+          <select value={role} onChange={(event) => setRole(event.target.value as 'ca' | 'tax')} className={`${inputClass} mt-1`}>
+            <option value="ca">{ROLE_LABEL.ca}</option>
+            <option value="tax">{ROLE_LABEL.tax}</option>
+          </select>
+        </label>
+        <button type="submit" disabled={busy} className={secondaryButton}>
+          Give access
+        </button>
+      </form>
+      {accountants && accountants.length > 0 && (
+        <ul className="mt-3 divide-y divide-slate-100">
+          {accountants.map((accountant) => (
+            <li key={accountant.userId} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+              <div>
+                <p className="font-semibold text-slate-950">{accountant.email}</p>
+                <p className="text-xs text-slate-500">
+                  {accountant.firm} · {ROLE_LABEL[accountant.role]} since {accountant.createdAt.slice(0, 10)}
+                </p>
+              </div>
+              <button type="button" onClick={() => revoke(accountant)} className={dangerButton}>
+                Remove access
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 };

@@ -1,6 +1,12 @@
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
-export type Role = 'admin' | 'member';
+export type Role = 'admin' | 'member' | 'tax' | 'ca';
+
+export const ROLES: Role[] = ['admin', 'member', 'tax', 'ca'];
+
+export function isRole(value: unknown): value is Role {
+  return value === 'admin' || value === 'member' || value === 'tax' || value === 'ca';
+}
 
 export type CurrentUser = {
   id: string;
@@ -8,6 +14,7 @@ export type CurrentUser = {
   organizationId: string;
   organizationName: string;
   role: Role;
+  homeOrganizationId: string;
 };
 
 export function asyncHandler(
@@ -41,6 +48,21 @@ export function requireAdmin(_req: Request, res: Response, next: NextFunction): 
     return;
   }
   next();
+}
+
+export function requireRoles(...roles: Role[]) {
+  return (_req: Request, res: Response, next: NextFunction): void => {
+    const user = res.locals.user as CurrentUser | undefined;
+    if (!user) {
+      res.status(401).json({ error: 'Sign in required.' });
+      return;
+    }
+    if (!roles.includes(user.role)) {
+      res.status(403).json({ error: 'You do not have access to this.' });
+      return;
+    }
+    next();
+  };
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

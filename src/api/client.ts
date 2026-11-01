@@ -11,7 +11,14 @@ export class ApiError extends Error {
   }
 }
 
-export type Role = 'admin' | 'member';
+export type Role = 'admin' | 'member' | 'tax' | 'ca';
+
+export const ROLE_LABEL: Record<Role, string> = {
+  admin: 'Admin',
+  member: 'Member',
+  tax: 'Tax accountant',
+  ca: 'Chartered accountant',
+};
 
 export type AuthUser = {
   id: string;
@@ -66,7 +73,14 @@ export type BuyerContact = Pick<
 
 export type Buyer = { id: string; name: string; consignee: BuyerContact; updatedAt: string };
 
-export type Payment = { id: string; amountUsd: number; paidOn: string; reference: string; createdAt: string };
+export type Payment = {
+  id: string;
+  amountUsd: number;
+  paidOn: string;
+  reference: string;
+  bankRateInr: number | null;
+  createdAt: string;
+};
 
 export type PaymentState = {
   status: InvoiceStatus;
@@ -192,6 +206,161 @@ export type AssistantTurn = {
 };
 
 export type TeamMember = { id: string; email: string; role: Role; createdAt: string };
+
+export type ExportScheme = 'lut' | 'igst';
+export type TaxDocumentKind = 'shipping_bill' | 'airway_bill' | 'lut';
+export type ReviewStatus = 'query' | 'accepted';
+
+export type ExportRegisterRow = {
+  id: string;
+  invoiceNumber: string;
+  invoiceDate: string | null;
+  buyerName: string;
+  destinationCountry: string;
+  status: InvoiceStatus;
+  taxableUsd: number;
+  totalCarats: number;
+  exportScheme: ExportScheme;
+  shippingBillNo: string;
+  shippingBillDate: string | null;
+  igstUsd: number;
+  awbNumber: string;
+  lutNumber: string;
+  reviewStatus: ReviewStatus | null;
+  reviewComment: string;
+  documents: TaxDocumentKind[];
+};
+
+export type RealizationRow = {
+  id: string;
+  invoiceNumber: string;
+  invoiceDate: string | null;
+  buyerName: string;
+  destinationCountry: string;
+  totalUsd: number;
+  paidUsd: number;
+  dueUsd: number;
+  bankReferences: string;
+  daysSinceShipment: number;
+  open: boolean;
+  missingReference: boolean;
+  shippedOn: string;
+  deadline: string;
+  daysLeft: number;
+  flag: 'overdue' | 'due_soon' | 'open' | 'needs_brc' | 'done';
+  brcNumber: string;
+  brcDate: string;
+  brcAmountUsd: number | null;
+};
+
+export type RealizationReport = {
+  realizationMonths: number;
+  rows: RealizationRow[];
+  openCount: number;
+  openUsd: number;
+  overdueCount: number;
+  dueSoonCount: number;
+  needsBrcCount: number;
+};
+
+export type TaxSettings = { realizationMonths: number; lutValidUntil: string | null; einvoiceRequired: boolean };
+
+export type FilingIssue = { code: string; message: string };
+
+export type FilingCheck = {
+  month: string;
+  einvoiceRequired: boolean;
+  companyIssues: FilingIssue[];
+  rows: Array<{
+    id: string;
+    invoiceNumber: string;
+    invoiceDate: string;
+    exportScheme: ExportScheme;
+    shippingBillNo: string;
+    irn: string;
+    issues: FilingIssue[];
+    ready: boolean;
+  }>;
+  readyCount: number;
+  issueCount: number;
+};
+
+export type BankSuggestion = {
+  invoiceId: string;
+  invoiceNumber: string;
+  buyerName: string;
+  dueUsd: number;
+  score: number;
+  reasons: string[];
+  shortByUsd: number;
+};
+
+export type BankLine = {
+  id: string;
+  lineDate: string;
+  amountUsd: number;
+  bankRateInr: number | null;
+  reference: string;
+  narration: string;
+  status: 'unmatched' | 'matched' | 'ignored';
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+  suggestions: BankSuggestion[];
+};
+
+export type ForexRow = {
+  paymentId: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  buyerName: string;
+  paidOn: string;
+  amountUsd: number;
+  reference: string;
+  invoiceRateInr: number | null;
+  bankRateInr: number | null;
+  invoiceInr: number | null;
+  bankInr: number | null;
+  gainInr: number | null;
+};
+
+export type ForexReport = {
+  month: string;
+  rows: ForexRow[];
+  missingRateCount: number;
+  totals: { gainInr: number; lossInr: number; netInr: number };
+};
+
+export type WorkspaceCompany = { id: string; name: string; role: Role; home: boolean };
+
+export type CalendarItem = {
+  organizationId: string;
+  organizationName: string;
+  kind: 'gstr1' | 'gstr3b' | 'lut' | 'realization' | 'refund' | 'filing';
+  title: string;
+  dueDate: string | null;
+  daysLeft: number | null;
+  status: 'overdue' | 'due_soon' | 'upcoming' | 'done' | 'action';
+  detail: string;
+};
+
+export type OutsideAccountant = { userId: string; email: string; role: 'ca' | 'tax'; firm: string; createdAt: string };
+
+export type InvoiceTax = {
+  exportScheme: ExportScheme;
+  shippingBillNo: string;
+  shippingBillDate: string;
+  igstUsd: number;
+  portCode: string;
+  sbInvoiceNumber: string;
+  sbValueUsd: number | null;
+  einvoice: { irn: string; ackNo: string; ackDate: string } | null;
+  month: string | null;
+  monthClosed: boolean;
+  documents: Array<{ id: string; kind: TaxDocumentKind; fileName: string; contentType: string; byteSize: number; createdAt: string }>;
+  review: { status: ReviewStatus; comment: string; updatedAt: string } | null;
+};
+
+export type ClosedMonth = { month: string; closedAt: string; closedBy: string | null };
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {

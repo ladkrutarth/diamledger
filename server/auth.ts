@@ -69,8 +69,23 @@ function toCurrentUser(row: UserRow): CurrentUser {
     email: row.email,
     organizationId: row.organization_id,
     organizationName: row.organization_name,
-    role: row.role === 'member' ? 'member' : 'admin',
+    role: row.role === 'member' || row.role === 'tax' || row.role === 'ca' ? row.role : 'admin',
+    homeOrganizationId: row.organization_id,
   };
+}
+
+/** Swaps in a client company the user was given access to, if the session has one selected. */
+async function applyActiveOrganization(pool: DbPool, user: CurrentUser, organizationId: string | undefined): Promise<CurrentUser> {
+  if (!organizationId || organizationId === user.homeOrganizationId) return user;
+  const access = await pool.query<{ role: 'ca' | 'tax'; name: string }>(
+    `SELECT a.role, o.name FROM organization_access a
+     JOIN organizations o ON o.id = a.organization_id
+     WHERE a.user_id = $1 AND a.organization_id = $2`,
+    [user.id, organizationId],
+  );
+  const row = access.rows[0];
+  if (!row) return user;
+  return { ...user, organizationId, organizationName: row.name, role: row.role };
 }
 
 async function startSession(req: Request, userId: string): Promise<void> {
@@ -93,7 +108,7 @@ export function loadUser(pool: DbPool) {
   return asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
     if (req.session.userId) {
       const row = await findUser(pool, 'id', req.session.userId);
-      if (row) res.locals.user = toCurrentUser(row);
+      if (row) res.locals.user = await applyActiveOrganization(pool, toCurrentUser(row), req.session.organizationId);
     }
     next();
   });

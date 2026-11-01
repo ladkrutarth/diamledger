@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { api, errorMessage, sendJson, type AuthUser } from '../../api/client';
+import { ROLE_LABEL, api, errorMessage, sendJson, type AuthUser } from '../../api/client';
 import { Card, Field, Notice, Page, primaryButton } from '../ui';
 
 export const AccountPage: React.FC<{ user: AuthUser }> = ({ user }) => {
@@ -39,7 +39,7 @@ export const AccountPage: React.FC<{ user: AuthUser }> = ({ user }) => {
           <dt className="text-slate-500">Company</dt>
           <dd className="font-medium">{user.organizationName}</dd>
           <dt className="text-slate-500">Role</dt>
-          <dd className="font-medium capitalize">{user.role}</dd>
+          <dd className="font-medium">{ROLE_LABEL[user.role]}</dd>
         </dl>
       </Card>
 

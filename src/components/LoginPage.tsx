@@ -230,18 +230,35 @@ export const LoginPage: React.FC<Props> = ({ onSuccess, resetToken, onResetFinis
 
         {mode === 'sign-in' && SHOW_DEMO_LOGIN && (
           <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
-            <p className="font-semibold text-slate-900">Demo account</p>
-            <p className="mt-1">Owner: owner@example.com</p>
-            <p>Password: password123</p>
-            <p className="mt-1 text-slate-600">The company also has 2 other admins and 20 members. They use the same password.</p>
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => signIn('owner@example.com', 'password123', '/api/auth/login')}
-              className="mt-2 text-sm font-semibold text-slate-950 underline disabled:opacity-50"
-            >
-              Sign in with the demo account
-            </button>
+            <p className="font-semibold text-slate-900">Demo accounts</p>
+            <p className="mt-1">Password for every demo account: password123</p>
+            <p className="mt-1 text-slate-600">Owner, tax accountant, and chartered accountant.</p>
+            <div className="mt-2 flex flex-col items-start gap-1">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => signIn('owner@example.com', 'password123', '/api/auth/login')}
+                className="text-sm font-semibold text-slate-950 underline disabled:opacity-50"
+              >
+                Sign in as owner
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => signIn('tax.desk@example.com', 'password123', '/api/auth/login')}
+                className="text-sm font-semibold text-slate-950 underline disabled:opacity-50"
+              >
+                Sign in as tax accountant
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => signIn('ca.review@example.com', 'password123', '/api/auth/login')}
+                className="text-sm font-semibold text-slate-950 underline disabled:opacity-50"
+              >
+                Sign in as chartered accountant
+              </button>
+            </div>
           </div>
         )}
 
