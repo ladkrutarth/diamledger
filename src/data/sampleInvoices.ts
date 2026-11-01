@@ -2,7 +2,7 @@ import { InvoiceState } from '../types/invoice';
 
 export const SURAT_TO_ANTWERP_PRESET: InvoiceState = {
   exporter: {
-    companyName: 'SHREE RAMKRISHNA EXPORTS (SRK) LLP',
+    companyName: 'xyz LLC',
     addressLine1: 'Tower B, 12th Floor, Surat Diamond Bourse (SDB)',
     addressLine2: 'DREAM City, Khajod',
     city: 'Surat',
