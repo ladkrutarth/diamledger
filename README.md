@@ -4,6 +4,66 @@ Web app for diamond export commercial invoices. Enter shipment data, preview an 
 
 The default sample exporter is **xyz LLC**.
 
+## Architecture
+
+The browser runs a React app. Signed-in screens call one Express API, which stores everything for a company in PostgreSQL. PDF, Tally, and SAP files are built in the browser. Parcel parsing and email are done on the server.
+
+```mermaid
+flowchart TB
+  browser["Browser"] --> spa["React app"]
+  spa --> local["Built in the browser: A4 preview, PDF, Tally XML, SAP payload"]
+  spa --> client["API client"]
+  client --> host{"Where it runs"}
+  host --> vercel["Vercel: static files and api/index.ts"]
+  host --> node["Local or Docker: server.ts"]
+  vercel --> express["Express"]
+  node --> express
+  express --> guard["Headers, body limits, session cookie, rate limits"]
+  guard --> routes["Auth, invoices, payments, company, buyers, dashboard, team, email, health"]
+  routes --> db[("PostgreSQL")]
+  routes --> gemini["Gemini, for parcel manifests"]
+  routes --> smtp["SMTP, for invoice email and password reset"]
+  express -.-> sentry["Sentry, optional"]
+  spa -.-> sentry
+```
+
+On Vercel, `vercel.json` sends every `/api` request to the single function `api/index.ts`. That function starts the same Express app used locally. In development, `server.ts` also serves the Vite app. In the Docker image it serves the built files from `dist` and runs the compiled server as the `node` user.
+
+A request passes through security headers and a size limit, then the session cookie, then the rate limiter, then the route. Invoice bodies are checked with zod before they are saved. Unexpected server errors can be reported to Sentry when `SENTRY_DSN` is set. `GET /api/health` only checks that PostgreSQL answers.
+
+```text
+src/                  React UI
+  api/client.ts       every call to /api
+  components/         sign-in, workspace, and pages
+  utils/              PDF, Tally, SAP, amount in words
+server/               Express routes, migrations, email, monitoring
+  app.ts              middleware and route registration
+  vercelHandler.ts    adapter used by the Vercel function
+api/index.ts          Vercel serverless entry
+server.ts             local and Docker entry
+db/migrations/        numbered SQL, applied once and recorded
+```
+
+### Data model
+
+One company is an `organizations` row. Its members, invoices, buyers, and payments all belong to that company. Invoice line items stay inside the invoice `data` JSON. The numbered columns (`status`, `total_usd`, `buyer_name`, and the rest) exist so the list, search, and dashboard do not have to read that JSON.
+
+```mermaid
+erDiagram
+  organizations ||--o{ users : "members"
+  organizations ||--o{ invoices : "owns"
+  organizations ||--o{ buyers : "address book"
+  organizations ||--o{ invoice_counters : "next number"
+  organizations ||--o{ payments : "records"
+  organizations ||--o{ email_dispatches : "sent mail"
+  users |o--o{ invoices : "created by"
+  users |o--o{ payments : "entered by"
+  users ||--o{ password_reset_tokens : "reset links"
+  invoices ||--o{ payments : "paid against"
+```
+
+Sessions live in the `session` table. Rate-limit counters live in `rate_limits`. Applied SQL files are recorded in `schema_migrations`.
+
 ## Features
 
 - Company accounts: invoices, buyers, and settings are shared by everyone in a company
