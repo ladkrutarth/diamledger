@@ -232,7 +232,7 @@ async function setupServer() {
     });
   }
 
-  app.listen(port, () => {
+  app.listen(Number(port), '0.0.0.0', () => {
     console.log(`💎 DiamondX-A1005 Precision Engine running on port ${port}`);
   });
 }
