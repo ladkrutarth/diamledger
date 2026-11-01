@@ -11,9 +11,11 @@ export function createPool(connectionString = process.env.DATABASE_URL): DbPool 
   if (!connectionString) {
     throw new Error('DATABASE_URL is required.');
   }
+  const local = /localhost|127\.0\.0\.1/.test(connectionString);
   return new Pool({
     connectionString,
     connectionTimeoutMillis: 10000,
+    ssl: local ? undefined : { rejectUnauthorized: false },
   });
 }
 

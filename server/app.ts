@@ -29,7 +29,12 @@ export function createApp(pool: DbPool): Express {
 
   app.set('trust proxy', 1);
   app.set('sessionStore', store);
-  app.use(express.json({ limit: '50mb' }));
+  const jsonParser = express.json({ limit: '50mb' });
+  app.use((req, res, next) => {
+    const bodyAlreadyRead = req.body !== undefined || req.readableEnded;
+    if (bodyAlreadyRead) return next();
+    return jsonParser(req, res, next);
+  });
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
   app.use(
     session({
@@ -49,6 +54,10 @@ export function createApp(pool: DbPool): Express {
   registerAuthRoutes(app, pool);
   registerInvoiceRoutes(app, pool);
   registerLegacyRoutes(app);
+
+  app.use((req, res) => {
+    res.status(404).json({ error: `No API route for ${req.method} ${req.originalUrl || req.url}` });
+  });
 
   return app;
 }
