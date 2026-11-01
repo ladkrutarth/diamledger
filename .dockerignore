@@ -1,0 +1,17 @@
+node_modules
+dist
+dist-server
+.devpg
+.github
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+coverage
+.vscode
+.idea
+*.md
+bun.lock

@@ -1,0 +1,6 @@
+{
+  "name": "DiamondX-A1005 Precision Engine",
+  "description": "Enterprise-grade automated diamond export commercial invoice generation, 100% layout-matched A4 PDF rendering, Tally Prime XML & SAP OData ERP synchronization, AI parcel manifest parsing, and SMTP email dispatch.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
