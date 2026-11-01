@@ -33,9 +33,9 @@ function convertThreeDigit(num: number): string {
 export function numberToWordsUSD(amount: number): string {
   if (isNaN(amount) || amount === 0) return 'US DOLLARS ZERO ONLY';
 
-  const absolute = Math.abs(amount);
-  const dollars = Math.floor(absolute);
-  const cents = Math.round((absolute - dollars) * 100);
+  const totalCents = Math.round(Math.abs(amount) * 100);
+  const dollars = Math.floor(totalCents / 100);
+  const cents = totalCents % 100;
 
   let words = '';
 

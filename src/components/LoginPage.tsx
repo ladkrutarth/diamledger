@@ -25,6 +25,8 @@ const COPY: Record<Mode, { title: string; subtitle: string; submit: string }> = 
   reset: { title: 'Choose a new password', subtitle: 'The link works once and expires after 1 hour.', submit: 'Save new password' },
 };
 
+const SHOW_DEMO_LOGIN = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEMO_LOGIN === 'true';
+
 const inputClass =
   'w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-slate-900';
 
@@ -206,7 +208,7 @@ export const LoginPage: React.FC<Props> = ({ onSuccess, resetToken, onResetFinis
           </button>
         </form>
 
-        {mode === 'sign-in' && (
+        {mode === 'sign-in' && SHOW_DEMO_LOGIN && (
           <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
             <p className="font-semibold text-slate-900">Demo account</p>
             <p className="mt-1">Email: owner@example.com</p>

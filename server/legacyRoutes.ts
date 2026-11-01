@@ -1,5 +1,4 @@
 import type { Express } from 'express';
-import nodemailer from 'nodemailer';
 import { GoogleGenAI, Type } from '@google/genai';
 import { requireUser } from './auth.js';
 
@@ -89,108 +88,6 @@ Always extract exact carats (e.g. 1.25, 2.504), pieces, rate per carat in USD, t
       console.error('Error in /api/parse-manifest:', error);
       return res.status(500).json({
         error: error.message || 'Failed to parse diamond manifest via Gemini API.',
-      });
-    }
-  });
-
-  app.post('/api/send-email', requireUser, async (req, res) => {
-    try {
-      const { smtpConfig, emailData, attachments } = req.body;
-
-      if (!emailData || !emailData.recipients || emailData.recipients.length === 0) {
-        return res.status(400).json({ error: 'At least one recipient email is required.' });
-      }
-
-      const { host, port: smtpPort, secure, user, pass, fromEmail, fromName } = smtpConfig || {};
-
-      if (!host || !user || !pass) {
-        const logEntry = {
-          status: 'simulated_success',
-          message: 'Email generated and queued in DiamondX Dispatch Gateway. (To send real external emails, enter valid SMTP credentials).',
-          timestamp: new Date().toISOString(),
-          recipients: emailData.recipients,
-          cc: emailData.cc || [],
-          subject: emailData.subject,
-          attachmentsCount: attachments?.length || 0,
-          invoiceNumber: emailData.invoiceNumber,
-        };
-        return res.json({ success: true, mode: 'preview_simulated', log: logEntry });
-      }
-
-      const transporter = nodemailer.createTransport({
-        host: host.trim(),
-        port: Number(smtpPort) || 587,
-        secure: Boolean(secure),
-        auth: {
-          user: user.trim(),
-          pass: pass.trim(),
-        },
-        tls: {
-          rejectUnauthorized: false,
-        },
-      });
-
-      const mailAttachments = (attachments || []).map((att: any) => ({
-        filename: att.filename,
-        content: Buffer.from(att.content.replace(/^data:[^;]+;base64,/, ''), 'base64'),
-        contentType: att.contentType || 'application/pdf',
-      }));
-
-      const mailOptions: any = {
-        from: `"${fromName || 'DiamondX Customs Desk'}" <${fromEmail || user}>`,
-        to: Array.isArray(emailData.recipients) ? emailData.recipients.join(', ') : emailData.recipients,
-        subject: emailData.subject,
-        html: emailData.htmlBody,
-        attachments: mailAttachments,
-      };
-
-      if (emailData.cc && emailData.cc.length > 0) {
-        mailOptions.cc = Array.isArray(emailData.cc) ? emailData.cc.join(', ') : emailData.cc;
-      }
-
-      const info = await transporter.sendMail(mailOptions);
-
-      return res.json({
-        success: true,
-        messageId: info.messageId,
-        accepted: info.accepted,
-        mode: 'live_smtp',
-      });
-    } catch (error: any) {
-      console.error('SMTP Dispatch error:', error);
-      return res.status(500).json({
-        error: error.message || 'Failed to dispatch email via SMTP server.',
-      });
-    }
-  });
-
-  app.post('/api/verify-smtp', requireUser, async (req, res) => {
-    try {
-      const { host, port: smtpPort, secure, user, pass } = req.body;
-
-      if (!host || !user || !pass) {
-        return res.status(400).json({ error: 'Host, Username, and Password are required.' });
-      }
-
-      const transporter = nodemailer.createTransport({
-        host: host.trim(),
-        port: Number(smtpPort) || 587,
-        secure: Boolean(secure),
-        auth: {
-          user: user.trim(),
-          pass: pass.trim(),
-        },
-        tls: {
-          rejectUnauthorized: false,
-        },
-      });
-
-      await transporter.verify();
-      return res.json({ success: true, message: 'SMTP connection verified successfully.' });
-    } catch (error: any) {
-      return res.status(400).json({
-        success: false,
-        error: error.message || 'SMTP Connection failed. Verify host, port, and security credentials.',
       });
     }
   });

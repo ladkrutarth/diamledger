@@ -1,5 +1,4 @@
-import html2canvas from 'html2canvas';
-import { jsPDF } from 'jspdf';
+import type { jsPDF } from 'jspdf';
 
 /**
  * Captures an HTML element and converts it into a high-fidelity A4 PDF.
@@ -22,6 +21,8 @@ export async function exportElementToPdf(
   if (!target) {
     throw new Error(`Element with id "${elementId}" not found for PDF export.`);
   }
+
+  const [{ default: html2canvas }, { jsPDF }] = await Promise.all([import('html2canvas'), import('jspdf')]);
 
   // Clone or capture target element with exact dimensions
   const canvas = await html2canvas(target, {

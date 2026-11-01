@@ -2,7 +2,7 @@ import type { Express } from 'express';
 import type { PoolClient } from 'pg';
 import type { DbPool } from './db.js';
 import { asyncHandler, currentUser, requireAdmin, requireUser } from './http.js';
-import { financialYear, invoiceFacts, isUuid, parseInvoice, type StoredInvoice } from './invoiceValidation.js';
+import { financialYear, invoiceFacts, isUuid, validateInvoice, type StoredInvoice } from './invoiceValidation.js';
 
 export const INVOICE_STATUSES = ['draft', 'issued', 'paid', 'cancelled'] as const;
 export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
@@ -181,10 +181,11 @@ export function registerInvoiceRoutes(app: Express, pool: DbPool): void {
 
   app.post('/api/invoices', requireUser, asyncHandler(async (req, res) => {
     const user = currentUser(res);
-    const parsed = parseInvoice(req.body?.invoice);
-    if (!parsed) {
-      return res.status(400).json({ error: 'Invoice data is incomplete.' });
+    const validation = validateInvoice(req.body?.invoice);
+    if (!validation.ok) {
+      return res.status(400).json({ error: validation.error });
     }
+    const parsed = validation.invoice;
 
     const client = await pool.connect();
     try {
@@ -231,10 +232,11 @@ export function registerInvoiceRoutes(app: Express, pool: DbPool): void {
     if (existing.status !== 'draft') {
       return res.status(409).json({ error: `This invoice is ${existing.status} and locked. Duplicate it to make changes.` });
     }
-    const parsed = parseInvoice(req.body?.invoice);
-    if (!parsed) {
-      return res.status(400).json({ error: 'Invoice data is incomplete.' });
+    const validation = validateInvoice(req.body?.invoice);
+    if (!validation.ok) {
+      return res.status(400).json({ error: validation.error });
     }
+    const parsed = validation.invoice;
 
     const client = await pool.connect();
     try {

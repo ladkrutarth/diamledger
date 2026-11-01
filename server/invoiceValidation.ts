@@ -1,13 +1,9 @@
-import { isRecord } from './http.js';
+import type { InvoiceState } from '../src/types/invoice.js';
 
 export { isUuid } from './http.js';
+export { validateInvoice } from './invoiceSchema.js';
 
-export type StoredInvoice = Record<string, unknown> & {
-  exporter: Record<string, unknown>;
-  consignee: Record<string, unknown> & { companyName?: string; country?: string };
-  shipment: Record<string, unknown> & { invoiceNumber: string; invoiceDate?: string; countryOfDestination?: string };
-  items: Array<Record<string, unknown>>;
-};
+export type StoredInvoice = InvoiceState;
 
 export type InvoiceFacts = {
   invoiceNumber: string;
@@ -18,38 +14,16 @@ export type InvoiceFacts = {
   totalCarats: number;
 };
 
-export function parseInvoice(value: unknown): StoredInvoice | null {
-  if (!isRecord(value)) return null;
-  const { shipment, exporter, consignee, items } = value;
-  if (!isRecord(shipment) || !isRecord(exporter) || !isRecord(consignee)) return null;
-  if (!Array.isArray(items) || !items.every(isRecord)) return null;
-
-  const invoiceNumber = shipment.invoiceNumber ?? '';
-  if (typeof invoiceNumber !== 'string' || invoiceNumber.length > 200) return null;
-
-  return value as StoredInvoice;
-}
-
-function toNumber(value: unknown): number {
-  const parsed = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function text(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
 export function invoiceFacts(invoice: StoredInvoice): InvoiceFacts {
-  const itemsTotal = invoice.items.reduce((sum, item) => sum + toNumber(item.totalAmount), 0);
-  const totalUsd =
-    itemsTotal + toNumber(invoice.freightUsd) + toNumber(invoice.insuranceUsd) + toNumber(invoice.otherChargesUsd);
-  const totalCarats = invoice.items.reduce((sum, item) => sum + toNumber(item.carats), 0);
-  const rawDate = text(invoice.shipment.invoiceDate);
+  const itemsTotal = invoice.items.reduce((sum, item) => sum + item.totalAmount, 0);
+  const totalUsd = itemsTotal + invoice.freightUsd + invoice.insuranceUsd + invoice.otherChargesUsd;
+  const totalCarats = invoice.items.reduce((sum, item) => sum + item.carats, 0);
+  const rawDate = invoice.shipment.invoiceDate.trim();
 
   return {
-    invoiceNumber: text(invoice.shipment.invoiceNumber),
-    buyerName: text(invoice.consignee.companyName),
-    destinationCountry: text(invoice.shipment.countryOfDestination) || text(invoice.consignee.country),
+    invoiceNumber: invoice.shipment.invoiceNumber.trim(),
+    buyerName: invoice.consignee.companyName.trim(),
+    destinationCountry: invoice.shipment.countryOfDestination.trim() || invoice.consignee.country.trim(),
     invoiceDate: /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : null,
     totalUsd: Math.round(totalUsd * 100) / 100,
     totalCarats: Math.round(totalCarats * 1000) / 1000,

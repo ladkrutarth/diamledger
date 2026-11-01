@@ -27,6 +27,7 @@ export const EmailDispatchPanel: React.FC<Props> = ({ invoice }) => {
   const [smtpSecure, setSmtpSecure] = useState<boolean>(true);
   const [smtpUser, setSmtpUser] = useState<string>('customs.dispatch@diamondx-trade.com');
   const [smtpPass, setSmtpPass] = useState<string>('');
+  const [allowInvalidCertificates, setAllowInvalidCertificates] = useState<boolean>(false);
   const [fromName, setFromName] = useState<string>(invoice.exporter.companyName);
 
   // Recipients
@@ -76,6 +77,7 @@ export const EmailDispatchPanel: React.FC<Props> = ({ invoice }) => {
           secure: smtpSecure,
           user: smtpUser,
           pass: smtpPass,
+          allowInvalidCertificates,
         }),
       });
       const data = await response.json();
@@ -208,6 +210,7 @@ export const EmailDispatchPanel: React.FC<Props> = ({ invoice }) => {
             pass: smtpPass,
             fromEmail: smtpUser,
             fromName: fromName || invoice.exporter.companyName,
+            allowInvalidCertificates,
           },
           emailData: {
             recipients,
@@ -337,6 +340,18 @@ export const EmailDispatchPanel: React.FC<Props> = ({ invoice }) => {
               </button>
             </div>
           </div>
+          <label className="flex items-start gap-1.5 text-[11px] text-slate-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={allowInvalidCertificates}
+              onChange={(e) => setAllowInvalidCertificates(e.target.checked)}
+              className="mt-0.5 rounded text-blue-600"
+            />
+            <span>
+              Allow a self-signed or invalid TLS certificate. Only use this for a mail server you control: it lets a
+              network attacker read your SMTP password.
+            </span>
+          </label>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             <div>

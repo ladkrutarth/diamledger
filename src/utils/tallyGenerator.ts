@@ -9,33 +9,42 @@ import { InvoiceState } from '../types/invoice';
  * - Statutory Export Narration with Kimberley & GJEPC details
  */
 export function generateTallyPrimeXML(invoice: InvoiceState): string {
-  const invoiceTotalUSD = invoice.items.reduce((sum, item) => sum + item.totalAmount, 0) +
-    invoice.freightUsd + invoice.insuranceUsd + invoice.otherChargesUsd;
-  
   const exchangeRate = invoice.exchangeRateInr || 86.50;
-  const invoiceTotalINR = (invoiceTotalUSD * exchangeRate).toFixed(2);
+  const toPaise = (usd: number) => Math.round(usd * 100);
+  const toBasePaise = (usd: number) => Math.round(usd * exchangeRate * 100);
+  const money = (paise: number) => (paise / 100).toFixed(2);
+  const charges = [
+    { ledger: 'International Freight Charges (Export)', usd: invoice.freightUsd },
+    { ledger: 'Marine Transit Insurance (Export)', usd: invoice.insuranceUsd },
+    { ledger: 'Other Export Charges', usd: invoice.otherChargesUsd },
+  ].filter((charge) => charge.usd > 0);
+
+  // Tally rejects vouchers whose debit and credits differ, so the party total is the sum of the rounded lines.
+  const creditsUsd = [...invoice.items.map((item) => item.totalAmount), ...charges.map((charge) => charge.usd)];
+  const invoiceTotalUSD = money(creditsUsd.reduce((sum, usd) => sum + toPaise(usd), 0));
+  const invoiceTotalINR = money(creditsUsd.reduce((sum, usd) => sum + toBasePaise(usd), 0));
   const formattedDate = invoice.shipment.invoiceDate.replace(/-/g, ''); // YYYYMMDD for Tally
 
   const xmlInventoryEntries = invoice.items.map((item, idx) => {
-    const itemTotalINR = (item.totalAmount * exchangeRate).toFixed(2);
-    const itemRateINR = (item.ratePerCarat * exchangeRate).toFixed(2);
+    const itemTotalINR = money(toBasePaise(item.totalAmount));
+    const itemRateINR = money(toBasePaise(item.ratePerCarat));
 
     return `        <ALLINVENTORYENTRIES.LIST>
           <STOCKITEMNAME>${escapeXml(item.description)}</STOCKITEMNAME>
           <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
           <RATE>$ ${item.ratePerCarat.toFixed(2)}/CTS</RATE>
-          <AMOUNT>-$ ${item.totalAmount.toFixed(2)}</AMOUNT>
+          <AMOUNT>-$ ${money(toPaise(item.totalAmount))}</AMOUNT>
           <ACTUALQTY>${item.carats.toFixed(3)} CTS</ACTUALQTY>
           <BILLEDQTY>${item.carats.toFixed(3)} CTS</BILLEDQTY>
-          <BATCHNAME>LOT-${item.parcelId || `P-${idx + 1}`}</BATCHNAME>
-          <HSNCODE>${item.hsCode}</HSNCODE>
+          <BATCHNAME>LOT-${escapeXml(item.parcelId || `P-${idx + 1}`)}</BATCHNAME>
+          <HSNCODE>${escapeXml(item.hsCode)}</HSNCODE>
           <CERTIFICATENO>${escapeXml(item.certificateNo || 'N/A')}</CERTIFICATENO>
           <BASEAMOUNT>-${itemTotalINR}</BASEAMOUNT>
           <BASERATE>${itemRateINR}/CTS</BASERATE>
           <ACCOUNTINGALLOCATIONS.LIST>
             <LEDGERNAME>Export Diamond Sales (Zero Rated LUT)</LEDGERNAME>
             <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-            <AMOUNT>-$ ${item.totalAmount.toFixed(2)}</AMOUNT>
+            <AMOUNT>-$ ${money(toPaise(item.totalAmount))}</AMOUNT>
             <BASEAMOUNT>-${itemTotalINR}</BASEAMOUNT>
           </ACCOUNTINGALLOCATIONS.LIST>
         </ALLINVENTORYENTRIES.LIST>`;
@@ -81,28 +90,20 @@ export function generateTallyPrimeXML(invoice: InvoiceState): string {
             <ALLLEDGERENTRIES.LIST>
               <LEDGERNAME>${escapeXml(invoice.consignee.companyName)}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
-              <AMOUNT>$ ${invoiceTotalUSD.toFixed(2)}</AMOUNT>
+              <AMOUNT>$ ${invoiceTotalUSD}</AMOUNT>
               <BASEAMOUNT>${invoiceTotalINR}</BASEAMOUNT>
             </ALLLEDGERENTRIES.LIST>
 
             <!-- Export Inventory Allocations -->
 ${xmlInventoryEntries}
 
-            <!-- Freight & Insurance Charges if applicable -->
-            ${invoice.freightUsd > 0 ? `
-            <ALLLEDGERENTRIES.LIST>
-              <LEDGERNAME>International Freight Charges (Export)</LEDGERNAME>
+            <!-- Freight, Insurance & Other Charges if applicable -->
+${charges.map((charge) => `            <ALLLEDGERENTRIES.LIST>
+              <LEDGERNAME>${charge.ledger}</LEDGERNAME>
               <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-              <AMOUNT>-$ ${invoice.freightUsd.toFixed(2)}</AMOUNT>
-              <BASEAMOUNT>-${(invoice.freightUsd * exchangeRate).toFixed(2)}</BASEAMOUNT>
-            </ALLLEDGERENTRIES.LIST>` : ''}
-            ${invoice.insuranceUsd > 0 ? `
-            <ALLLEDGERENTRIES.LIST>
-              <LEDGERNAME>Marine Transit Insurance (Export)</LEDGERNAME>
-              <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
-              <AMOUNT>-$ ${invoice.insuranceUsd.toFixed(2)}</AMOUNT>
-              <BASEAMOUNT>-${(invoice.insuranceUsd * exchangeRate).toFixed(2)}</BASEAMOUNT>
-            </ALLLEDGERENTRIES.LIST>` : ''}
+              <AMOUNT>-$ ${money(toPaise(charge.usd))}</AMOUNT>
+              <BASEAMOUNT>-${money(toBasePaise(charge.usd))}</BASEAMOUNT>
+            </ALLLEDGERENTRIES.LIST>`).join('\n')}
 
           </VOUCHER>
         </TALLYMESSAGE>

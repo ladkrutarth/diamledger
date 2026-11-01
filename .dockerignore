@@ -1,5 +1,8 @@
 node_modules
 dist
+dist-server
+.devpg
+.github
 .git
 .gitignore
 .env

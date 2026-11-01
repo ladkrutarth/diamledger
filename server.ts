@@ -1,22 +1,24 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import { applySchemaWithRetry, createPool } from './server/db.js';
+import { createPool, migrateOnStart, runMigrationsWithRetry } from './server/db.js';
 import { createApp } from './server/app.js';
+import { flushMonitoring, initMonitoring, reportError } from './server/monitoring.js';
 import { seedDemoUser } from './server/seed.js';
 
 dotenv.config();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const port = process.env.PORT || 3000;
 const isProd = process.env.NODE_ENV === 'production';
+const distDir = path.resolve(process.cwd(), 'dist');
 
 async function setupServer() {
+  await initMonitoring();
   const pool = createPool();
-  await applySchemaWithRetry(pool);
+  if (migrateOnStart()) {
+    const applied = await runMigrationsWithRetry(pool);
+    if (applied.length) console.log(`Applied migrations: ${applied.join(', ')}`);
+  }
   await seedDemoUser(pool);
   const app = createApp(pool);
 
@@ -28,9 +30,9 @@ async function setupServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.resolve(__dirname, 'dist')));
+    app.use(express.static(distDir, { index: false }));
     app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.join(distDir, 'index.html'));
     });
   }
 
@@ -39,7 +41,9 @@ async function setupServer() {
   });
 }
 
-setupServer().catch((error) => {
+setupServer().catch(async (error) => {
   console.error('Failed to start server:', error);
+  await reportError(error, { path: 'startup' }).catch(() => undefined);
+  await flushMonitoring().catch(() => undefined);
   process.exit(1);
 });

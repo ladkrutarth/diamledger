@@ -30,6 +30,8 @@ services:
       APP_URL: ${APP_URL:-http://localhost:3000}
       DATABASE_URL: postgresql://diamondx:diamondx@postgres:5432/diamondx
       SESSION_SECRET: ${SESSION_SECRET:-dev-session-secret-change-me}
+      SEED_DEMO_USER: ${SEED_DEMO_USER:-false}
+      SENTRY_DSN: ${SENTRY_DSN:-}
     depends_on:
       postgres:
         condition: service_healthy
