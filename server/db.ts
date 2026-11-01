@@ -11,12 +11,26 @@ export function createPool(connectionString = process.env.DATABASE_URL): DbPool 
   if (!connectionString) {
     throw new Error('DATABASE_URL is required.');
   }
-  return new Pool({ connectionString });
+  return new Pool({
+    connectionString,
+    connectionTimeoutMillis: 10000,
+  });
+}
+
+function schemaPath(): string {
+  const candidates = [
+    path.resolve(process.cwd(), 'db/schema.sql'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../db/schema.sql'),
+  ];
+  const found = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!found) {
+    throw new Error('db/schema.sql was not found.');
+  }
+  return found;
 }
 
 export async function applySchema(pool: DbPool): Promise<void> {
-  const schemaPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../db/schema.sql');
-  const sql = fs.readFileSync(schemaPath, 'utf8');
+  const sql = fs.readFileSync(schemaPath(), 'utf8');
   await pool.query(sql);
 }
 

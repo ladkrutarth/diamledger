@@ -20,12 +20,14 @@ export function sessionSecret(): string {
 
 export function createApp(pool: DbPool): Express {
   const app = express();
+  const onVercel = process.env.VERCEL === '1';
   const store = new PgSession({
     pool,
     tableName: 'session',
     createTableIfMissing: false,
   });
 
+  app.set('trust proxy', 1);
   app.set('sessionStore', store);
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
@@ -38,7 +40,7 @@ export function createApp(pool: DbPool): Express {
       cookie: {
         httpOnly: true,
         sameSite: 'lax',
-        secure: false,
+        secure: onVercel,
         maxAge: 7 * 24 * 60 * 60 * 1000,
       },
     }),

@@ -34,6 +34,15 @@ Open [http://localhost:3000](http://localhost:3000). Create an account on the si
 
 Set `GEMINI_API_KEY` in `.env` before using the AI parcel parser. Set `DATABASE_URL` and `SESSION_SECRET` before the API starts. SMTP settings are entered in the app when you send email.
 
+## Vercel
+
+The site is a static frontend plus a serverless API. In the Vercel project settings, set:
+
+- `DATABASE_URL` to a hosted Postgres connection string. The database inside Docker is not reachable from Vercel.
+- `SESSION_SECRET` to a long random string.
+
+Redeploy after saving those variables. The sign-in page opens even if the database is missing. The demo account `owner@example.com` / `password123` is created the first time the API connects.
+
 ## Docker
 
 ```bash

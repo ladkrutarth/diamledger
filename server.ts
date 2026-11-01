@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { applySchemaWithRetry, createPool } from './server/db';
 import { createApp } from './server/app';
+import { seedDemoUser } from './server/seed';
 
 dotenv.config();
 
@@ -16,6 +17,7 @@ const isProd = process.env.NODE_ENV === 'production';
 async function setupServer() {
   const pool = createPool();
   await applySchemaWithRetry(pool);
+  await seedDemoUser(pool);
   const app = createApp(pool);
 
   if (!isProd) {

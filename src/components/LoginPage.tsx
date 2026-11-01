@@ -15,15 +15,13 @@ export const LoginPage: React.FC<Props> = ({ onSuccess }) => {
 
   const isCreate = mode === 'create-account';
 
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const signIn = async (nextEmail: string, nextPassword: string, path: '/api/auth/login' | '/api/auth/register') => {
     setError('');
     setSubmitting(true);
     try {
-      const path = isCreate ? '/api/auth/register' : '/api/auth/login';
       const result = await api<{ user: AuthUser }>(path, {
         method: 'POST',
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email: nextEmail, password: nextPassword }),
       });
       onSuccess(result.user);
     } catch (err) {
@@ -31,6 +29,14 @@ export const LoginPage: React.FC<Props> = ({ onSuccess }) => {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const nextEmail = String(data.get('email') || email);
+    const nextPassword = String(data.get('password') || password);
+    await signIn(nextEmail, nextPassword, isCreate ? '/api/auth/register' : '/api/auth/login');
   };
 
   return (
@@ -59,8 +65,9 @@ export const LoginPage: React.FC<Props> = ({ onSuccess }) => {
             </label>
             <input
               id="email"
+              name="email"
               type="email"
-              autoComplete="email"
+              autoComplete="username"
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
@@ -73,6 +80,7 @@ export const LoginPage: React.FC<Props> = ({ onSuccess }) => {
             </label>
             <input
               id="password"
+              name="password"
               type="password"
               autoComplete={isCreate ? 'new-password' : 'current-password'}
               required
@@ -97,6 +105,22 @@ export const LoginPage: React.FC<Props> = ({ onSuccess }) => {
             {submitting ? 'Please wait...' : isCreate ? 'Create account' : 'Sign in'}
           </button>
         </form>
+
+        {!isCreate && (
+          <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
+            <p className="font-semibold text-slate-900">Demo account</p>
+            <p className="mt-1">Email: owner@example.com</p>
+            <p>Password: password123</p>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => signIn('owner@example.com', 'password123', '/api/auth/login')}
+              className="mt-2 text-sm font-semibold text-slate-950 underline disabled:opacity-50"
+            >
+              Sign in with the demo account
+            </button>
+          </div>
+        )}
 
         <button
           type="button"

@@ -42,10 +42,19 @@ export default function App() {
   const [saveMessage, setSaveMessage] = useState('');
 
   useEffect(() => {
-    api<{ user: AuthUser }>('/api/auth/me')
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 8000);
+    api<{ user: AuthUser }>('/api/auth/me', { signal: controller.signal })
       .then((result) => setUser(result.user))
       .catch(() => setUser(null))
-      .finally(() => setAuthReady(true));
+      .finally(() => {
+        window.clearTimeout(timer);
+        setAuthReady(true);
+      });
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
   }, []);
 
   const refreshInvoices = async () => {
