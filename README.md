@@ -6,6 +6,7 @@ The default sample exporter is **xyz LLC**.
 
 ## Features
 
+- Sign in and save invoices for each account
 - Invoice workspace with live A4 preview
 - PDF export
 - AI parcel manifest parsing (Gemini)
@@ -15,19 +16,23 @@ The default sample exporter is **xyz LLC**.
 ## Requirements
 
 - Node.js 22
+- Docker, for PostgreSQL
 - A [Gemini API key](https://aistudio.google.com/apikey) if you use the AI parcel parser
 
 ## Run locally
 
+Start the database, then the app:
+
 ```bash
+docker compose up postgres -d
 npm install
 cp .env.example .env
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). Create an account on the sign-in page, then save invoices from the workspace.
 
-Set `GEMINI_API_KEY` in `.env` before using the AI parcel parser. SMTP settings are entered in the app when you send email.
+Set `GEMINI_API_KEY` in `.env` before using the AI parcel parser. Set `DATABASE_URL` and `SESSION_SECRET` before the API starts. SMTP settings are entered in the app when you send email.
 
 ## Docker
 
@@ -35,7 +40,15 @@ Set `GEMINI_API_KEY` in `.env` before using the AI parcel parser. SMTP settings 
 docker compose up --build
 ```
 
-The app listens on port 3000. Pass `GEMINI_API_KEY` in the environment if you want AI parsing inside the container.
+PostgreSQL and the app start together. The app listens on port 3000. Pass `GEMINI_API_KEY` in the environment if you want AI parsing inside the container. Override `SESSION_SECRET` for anything other than a local demo.
+
+## Tests
+
+```bash
+npm test
+```
+
+The suite starts a temporary PostgreSQL database, then checks accounts, saved invoices, and the login form. Docker is only needed when you run the app.
 
 ## Scripts
 
@@ -45,3 +58,4 @@ The app listens on port 3000. Pass `GEMINI_API_KEY` in the environment if you wa
 | `npm start` | Start the app |
 | `npm run build` | Build the frontend |
 | `npm run lint` | Type-check the project |
+| `npm test` | Run auth, invoice, and login tests |

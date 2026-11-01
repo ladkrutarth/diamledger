@@ -1,4 +1,22 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: diamondx
+      POSTGRES_PASSWORD: diamondx
+      POSTGRES_DB: diamondx
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U diamondx -d diamondx"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   app:
     build:
       context: .
@@ -10,4 +28,12 @@ services:
       PORT: 3000
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       APP_URL: ${APP_URL:-http://localhost:3000}
+      DATABASE_URL: postgresql://diamondx:diamondx@postgres:5432/diamondx
+      SESSION_SECRET: ${SESSION_SECRET:-dev-session-secret-change-me}
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  pgdata:

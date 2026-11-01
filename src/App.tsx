@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   FileSpreadsheet, 
   Sparkles, 
@@ -26,12 +26,37 @@ import { AiManifestParser } from './components/AiManifestParser';
 import { ErpSyncPanel } from './components/ErpSyncPanel';
 import { EmailDispatchPanel } from './components/EmailDispatchPanel';
 import { exportElementToPdf } from './utils/pdfGenerator';
+import { LoginPage } from './components/LoginPage';
+import { ApiError, api, type AuthUser, type InvoiceSummary } from './api/client';
 
 export default function App() {
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [invoice, setInvoice] = useState<InvoiceState>(SURAT_TO_ANTWERP_PRESET);
+  const [invoiceId, setInvoiceId] = useState<string | null>(null);
+  const [savedInvoices, setSavedInvoices] = useState<InvoiceSummary[]>([]);
   const [activeModule, setActiveModule] = useState<'editor' | 'erp' | 'email'>('editor');
   const [isAiParserOpen, setIsAiParserOpen] = useState<boolean>(false);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
+
+  useEffect(() => {
+    api<{ user: AuthUser }>('/api/auth/me')
+      .then((result) => setUser(result.user))
+      .catch(() => setUser(null))
+      .finally(() => setAuthReady(true));
+  }, []);
+
+  const refreshInvoices = async () => {
+    const result = await api<{ invoices: InvoiceSummary[] }>('/api/invoices');
+    setSavedInvoices(result.invoices);
+  };
+
+  useEffect(() => {
+    if (!user) return;
+    refreshInvoices().catch(() => setSavedInvoices([]));
+  }, [user]);
 
   // Quick download from top bar
   const handleTopDownload = async () => {
@@ -48,6 +73,66 @@ export default function App() {
       setIsDownloading(false);
     }
   };
+
+  const handleSaveInvoice = async () => {
+    setIsSaving(true);
+    setSaveMessage('');
+    try {
+      const payload = { method: invoiceId ? 'PUT' : 'POST', body: JSON.stringify({ invoice }) };
+      const path = invoiceId ? `/api/invoices/${invoiceId}` : '/api/invoices';
+      const saved = await api<{ id: string }>(path, payload);
+      setInvoiceId(saved.id);
+      await refreshInvoices();
+      setSaveMessage('Saved');
+    } catch (err) {
+      setSaveMessage(err instanceof ApiError ? err.message : 'Could not save invoice.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleOpenInvoice = async (id: string) => {
+    if (!id) return;
+    setSaveMessage('');
+    try {
+      const saved = await api<{ id: string; invoice: InvoiceState }>(`/api/invoices/${id}`);
+      setInvoice(saved.invoice);
+      setInvoiceId(saved.id);
+    } catch (err) {
+      setSaveMessage(err instanceof ApiError ? err.message : 'Could not open invoice.');
+    }
+  };
+
+  const handleNewInvoice = () => {
+    setInvoice(SURAT_TO_ANTWERP_PRESET);
+    setInvoiceId(null);
+    setSaveMessage('');
+  };
+
+  const handleLogout = async () => {
+    try {
+      await api('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // The local session still ends if the server is unreachable.
+    }
+    setUser(null);
+    setInvoice(SURAT_TO_ANTWERP_PRESET);
+    setInvoiceId(null);
+    setSavedInvoices([]);
+    setSaveMessage('');
+  };
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-slate-100 text-slate-600 flex items-center justify-center text-sm">
+        Checking session...
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginPage onSuccess={setUser} />;
+  }
 
   // AI parsed data merge callback
   const handleApplyAiData = (
@@ -130,6 +215,20 @@ export default function App() {
 
         {/* Zone 3: 1 Primary Action */}
         <div className="flex items-center gap-2 shrink-0">
+          <span className="hidden lg:inline text-xs text-slate-500 max-w-[180px] truncate">{user.email}</span>
+          <button
+            onClick={handleLogout}
+            className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-950"
+          >
+            Log out
+          </button>
+          <button
+            onClick={handleSaveInvoice}
+            disabled={isSaving}
+            className="px-3 py-1.5 text-xs font-semibold text-slate-900 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg disabled:opacity-50"
+          >
+            {isSaving ? 'Saving...' : 'Save'}
+          </button>
           <button
             onClick={handleTopDownload}
             disabled={isDownloading}
@@ -175,6 +274,35 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Workspace Panel */}
         <aside className="w-full md:w-[48%] lg:w-[45%] xl:w-[43%] flex flex-col border-r border-slate-300 bg-white shadow-xs z-10 shrink-0">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-white">
+            <label htmlFor="saved-invoices" className="text-[11px] font-semibold text-slate-600 shrink-0">
+              My invoices
+            </label>
+            <select
+              id="saved-invoices"
+              value={invoiceId ?? ''}
+              onChange={(event) => handleOpenInvoice(event.target.value)}
+              className="flex-1 min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs"
+            >
+              <option value="">Unsaved draft</option>
+              {savedInvoices.map((saved) => (
+                <option key={saved.id} value={saved.id}>
+                  {saved.invoiceNumber}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={handleNewInvoice}
+              className="px-2 py-1 text-xs font-semibold rounded-md border border-slate-300 hover:bg-slate-50"
+            >
+              New
+            </button>
+          </div>
+          {saveMessage && (
+            <p className={`px-3 py-1 text-[11px] ${saveMessage === 'Saved' ? 'text-emerald-700' : 'text-red-700'}`}>
+              {saveMessage}
+            </p>
+          )}
           {/* Module Switcher Tabs */}
           <div className="flex items-center justify-around border-b border-slate-200 bg-slate-50 text-xs font-semibold p-1">
             <button
