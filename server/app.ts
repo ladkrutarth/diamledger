@@ -5,6 +5,13 @@ import type { DbPool } from './db.js';
 import { geminiAssistantModel, type AssistantModel } from './assistant/agent.js';
 import { registerAssistantRoutes } from './assistant/routes.js';
 import { loadUser, registerAuthRoutes } from './auth.js';
+import { registerTaxRoutes } from './tax.js';
+import { registerFilingRoutes } from './filing.js';
+import { registerBankRoutes } from './bank.js';
+import { registerRealizationRoutes } from './realization.js';
+import { registerForexRoutes } from './forex.js';
+import { registerWorkspaceRoutes } from './workspace.js';
+import type { CurrentUser } from './http.js';
 import { registerCompanyRoutes } from './company.js';
 import { registerDashboardRoutes } from './dashboard.js';
 import { registerHealthRoute } from './health.js';
@@ -28,6 +35,28 @@ export type AppOptions = {
 };
 
 const PgSession = connectPgSimple(session);
+
+function charteredAccountantGuard(req: Request, res: Response, next: NextFunction): void {
+  const user = res.locals.user as CurrentUser | undefined;
+  if (!user || user.role !== 'ca' || req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') {
+    next();
+    return;
+  }
+  const path = req.path;
+  const allowed =
+    path === '/api/auth/logout' ||
+    path === '/api/auth/change-password' ||
+    path === '/api/workspace/switch' ||
+    /^\/api\/invoices\/[0-9a-f-]{36}\/review$/.test(path) ||
+    /^\/api\/tax\/months\/\d{4}-\d{2}\/(close|open)$/.test(path);
+  if (!allowed) {
+    res.status(403).json({
+      error: 'A chartered accountant account can review invoices and close months. It cannot change invoices, payments, buyers, or the team.',
+    });
+    return;
+  }
+  next();
+}
 
 export function sessionSecret(): string {
   const secret = process.env.SESSION_SECRET;
@@ -70,10 +99,17 @@ export function createApp(pool: DbPool, options: AppOptions = {}): Express {
   );
 
   app.use(loadUser(pool));
+  app.use(charteredAccountantGuard);
   registerRateLimits(app, pool);
 
   registerAuthRoutes(app, pool, options.sendPasswordResetEmail ?? sendPasswordResetEmail);
   registerInvoiceRoutes(app, pool);
+  registerTaxRoutes(app, pool);
+  registerFilingRoutes(app, pool);
+  registerBankRoutes(app, pool);
+  registerRealizationRoutes(app, pool);
+  registerForexRoutes(app, pool);
+  registerWorkspaceRoutes(app, pool);
   registerPaymentRoutes(app, pool);
   registerCompanyRoutes(app, pool);
   registerDashboardRoutes(app, pool);

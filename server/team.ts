@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import type { Express } from 'express';
 import type { DbPool } from './db.js';
 import { isValidEmail, MIN_PASSWORD_LENGTH, normalizeEmail } from './auth.js';
-import { asyncHandler, currentUser, isUuid, requireAdmin } from './http.js';
+import { asyncHandler, currentUser, isRole, isUuid, requireAdmin, type Role } from './http.js';
 
 type MemberRow = { id: string; email: string; role: string; created_at: Date };
 
@@ -30,7 +30,7 @@ export function registerTeamRoutes(app: Express, pool: DbPool): void {
   app.post('/api/team/members', requireAdmin, asyncHandler(async (req, res) => {
     const email = normalizeEmail(req.body?.email);
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const role = req.body?.role === 'admin' ? 'admin' : 'member';
+    const role: Role = isRole(req.body?.role) ? req.body.role : 'member';
 
     if (!isValidEmail(email)) {
       return res.status(400).json({ error: 'Enter a valid email address.' });
@@ -58,8 +58,8 @@ export function registerTeamRoutes(app: Express, pool: DbPool): void {
   app.patch('/api/team/members/:id', requireAdmin, asyncHandler(async (req, res) => {
     const user = currentUser(res);
     const role = req.body?.role;
-    if (role !== 'admin' && role !== 'member') {
-      return res.status(400).json({ error: 'Role must be admin or member.' });
+    if (!isRole(role)) {
+      return res.status(400).json({ error: 'Choose admin, member, tax accountant, or chartered accountant.' });
     }
     if (!isUuid(req.params.id)) {
       return res.status(404).json({ error: 'Team member not found.' });
@@ -71,7 +71,7 @@ export function registerTeamRoutes(app: Express, pool: DbPool): void {
     if (!target.rows[0]) {
       return res.status(404).json({ error: 'Team member not found.' });
     }
-    if (target.rows[0].role === 'admin' && role === 'member' && (await adminCount(pool, user.organizationId)) <= 1) {
+    if (target.rows[0].role === 'admin' && role !== 'admin' && (await adminCount(pool, user.organizationId)) <= 1) {
       return res.status(409).json({ error: 'A company needs at least one admin.' });
     }
     const result = await pool.query<MemberRow>(

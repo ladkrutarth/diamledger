@@ -7,14 +7,16 @@ interface Props {
   invoiceId: string | null;
   status: InvoiceStatus;
   isAdmin: boolean;
+  readOnly?: boolean;
   onChanged: () => void;
 }
 
-export const PaymentsPanel: React.FC<Props> = ({ invoiceId, status, isAdmin, onChanged }) => {
+export const PaymentsPanel: React.FC<Props> = ({ invoiceId, status, isAdmin, readOnly = false, onChanged }) => {
   const [state, setState] = useState<PaymentState | null>(null);
   const [amount, setAmount] = useState('');
   const [paidOn, setPaidOn] = useState(todayIso());
   const [reference, setReference] = useState('');
+  const [bankRate, setBankRate] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -31,7 +33,7 @@ export const PaymentsPanel: React.FC<Props> = ({ invoiceId, status, isAdmin, onC
     return <div className="p-4"><Notice>Save the invoice first, then issue it to record payments.</Notice></div>;
   }
 
-  const canRecord = status === 'issued' || status === 'paid';
+  const canRecord = !readOnly && (status === 'issued' || status === 'paid');
 
   const record = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -40,11 +42,12 @@ export const PaymentsPanel: React.FC<Props> = ({ invoiceId, status, isAdmin, onC
     try {
       const next = await api<PaymentState>(
         `/api/invoices/${invoiceId}/payments`,
-        sendJson('POST', { amountUsd: Number(amount), paidOn, reference }),
+        sendJson('POST', { amountUsd: Number(amount), paidOn, reference, bankRateInr: bankRate.trim() }),
       );
       setState(next);
       setAmount('');
       setReference('');
+      setBankRate('');
       onChanged();
     } catch (err) {
       setError(errorMessage(err, 'Could not record the payment.'));
@@ -91,6 +94,9 @@ export const PaymentsPanel: React.FC<Props> = ({ invoiceId, status, isAdmin, onC
             <Field label="Bank reference / SWIFT message" value={reference} onChange={setReference} />
           </div>
           <div className="col-span-2">
+            <Field label="Bank rate (₹ per USD, for exchange gain or loss)" type="number" value={bankRate} onChange={setBankRate} />
+          </div>
+          <div className="col-span-2">
             <button type="submit" disabled={busy} className={primaryButton}>
               {busy ? 'Saving...' : 'Record payment'}
             </button>
@@ -115,6 +121,7 @@ export const PaymentsPanel: React.FC<Props> = ({ invoiceId, status, isAdmin, onC
                 <p className="text-xs text-slate-500">
                   {payment.paidOn}
                   {payment.reference ? ` · ${payment.reference}` : ''}
+                  {payment.bankRateInr ? ` · ₹${payment.bankRateInr}/USD` : ''}
                 </p>
               </div>
               {isAdmin && (

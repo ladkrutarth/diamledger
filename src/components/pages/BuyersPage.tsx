@@ -22,7 +22,7 @@ function blankBuyer(): BuyerContact {
   return Object.fromEntries(BUYER_KEYS.map((key) => [key, ''])) as BuyerContact;
 }
 
-export const BuyersPage: React.FC = () => {
+export const BuyersPage: React.FC<{ readOnly?: boolean }> = ({ readOnly = false }) => {
   const [buyers, setBuyers] = useState<Buyer[] | null>(null);
   const [editing, setEditing] = useState<{ id: string | null; consignee: BuyerContact } | null>(null);
   const [error, setError] = useState('');
@@ -69,15 +69,17 @@ export const BuyersPage: React.FC = () => {
       title="Buyers"
       description="Saved consignees you can pick when creating an invoice."
       actions={
-        <button type="button" onClick={() => setEditing({ id: null, consignee: blankBuyer() })} className={primaryButton}>
-          <Plus className="w-3.5 h-3.5" />
-          Add buyer
-        </button>
+        !readOnly && (
+          <button type="button" onClick={() => setEditing({ id: null, consignee: blankBuyer() })} className={primaryButton}>
+            <Plus className="w-3.5 h-3.5" />
+            Add buyer
+          </button>
+        )
       }
     >
       {error && <Notice tone="error">{error}</Notice>}
 
-      {editing && (
+      {!readOnly && editing && (
         <Card title={editing.id ? 'Edit buyer' : 'New buyer'}>
           <form onSubmit={save} className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {BUYER_KEYS.map((key) => (
@@ -119,6 +121,7 @@ export const BuyersPage: React.FC = () => {
                       'No address details'}
                   </p>
                 </div>
+                {!readOnly && (
                 <div className="flex gap-2">
                   <button
                     type="button"
@@ -131,6 +134,7 @@ export const BuyersPage: React.FC = () => {
                     Remove
                   </button>
                 </div>
+                )}
               </li>
             ))}
           </ul>

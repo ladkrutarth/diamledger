@@ -52,6 +52,8 @@ export function jsonBodyParser(): RequestHandler {
 
   return (req, res, next) => {
     if (req.body !== undefined || req.readableEnded) return next();
-    return parserFor(LARGE_BODY_ROUTES[req.path] ?? DEFAULT_JSON_LIMIT)(req, res, next);
+    const documentUpload =
+      /^\/api\/invoices\/[^/]+\/documents$/.test(req.path) || req.path === '/api/bank/import' || req.path === '/api/tax/ebrc/import';
+    return parserFor(LARGE_BODY_ROUTES[req.path] ?? (documentUpload ? '3mb' : DEFAULT_JSON_LIMIT))(req, res, next);
   };
 }

@@ -9,7 +9,7 @@ export const DEMO_EMAIL = 'owner@example.com';
 export const DEMO_MEMBER_EMAIL = 'priya.mehta@example.com';
 export const DEMO_PASSWORD = 'password123';
 
-export const DEMO_TEAM: Array<{ email: string; role: 'admin' | 'member' }> = [
+export const DEMO_TEAM: Array<{ email: string; role: 'admin' | 'member' | 'tax' | 'ca' }> = [
   { email: DEMO_EMAIL, role: 'admin' },
   { email: 'anil.desai@example.com', role: 'admin' },
   { email: 'neha.kapoor@example.com', role: 'admin' },
@@ -33,6 +33,8 @@ export const DEMO_TEAM: Array<{ email: string; role: 'admin' | 'member' }> = [
   { email: 'sameer.khan@example.com', role: 'member' },
   { email: 'lakshmi.pillai@example.com', role: 'member' },
   { email: 'harsh.agarwal@example.com', role: 'member' },
+  { email: 'tax.desk@example.com', role: 'tax' },
+  { email: 'ca.review@example.com', role: 'ca' },
 ];
 
 export function demoUserEnabled(): boolean {

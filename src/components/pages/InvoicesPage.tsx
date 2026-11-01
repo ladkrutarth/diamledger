@@ -7,12 +7,13 @@ import { Card, Notice, Page, dangerButton, inputClass, primaryButton, secondaryB
 
 interface Props {
   isAdmin: boolean;
+  canWrite?: boolean;
   initialStatus?: string;
   onOpen: (id: string) => void;
   onNew: () => void;
 }
 
-export const InvoicesPage: React.FC<Props> = ({ isAdmin, initialStatus = '', onOpen, onNew }) => {
+export const InvoicesPage: React.FC<Props> = ({ isAdmin, canWrite = true, initialStatus = '', onOpen, onNew }) => {
   const [filters, setFilters] = useState({ q: '', status: initialStatus, from: '', to: '' });
   const [invoices, setInvoices] = useState<InvoiceSummary[] | null>(null);
   const [error, setError] = useState('');
@@ -59,10 +60,12 @@ export const InvoicesPage: React.FC<Props> = ({ isAdmin, initialStatus = '', onO
             <Download className="w-3.5 h-3.5" />
             Export to Excel (CSV)
           </a>
-          <button type="button" onClick={onNew} className={primaryButton}>
-            <Plus className="w-3.5 h-3.5" />
-            New invoice
-          </button>
+          {canWrite && (
+            <button type="button" onClick={onNew} className={primaryButton}>
+              <Plus className="w-3.5 h-3.5" />
+              New invoice
+            </button>
+          )}
         </>
       }
     >

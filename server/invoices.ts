@@ -1,6 +1,7 @@
 import type { Express } from 'express';
 import type { PoolClient } from 'pg';
 import type { DbPool } from './db.js';
+import { closedMonthMessage } from './closedMonths.js';
 import { asyncHandler, currentUser, requireAdmin, requireUser } from './http.js';
 import { financialYear, invoiceFacts, isUuid, validateInvoice, type StoredInvoice } from './invoiceValidation.js';
 
@@ -186,6 +187,8 @@ export function registerInvoiceRoutes(app: Express, pool: DbPool): void {
       return res.status(400).json({ error: validation.error });
     }
     const parsed = validation.invoice;
+    const closed = await closedMonthMessage(pool, user.organizationId, invoiceFacts(parsed).invoiceDate);
+    if (closed) return res.status(409).json({ error: closed });
 
     const client = await pool.connect();
     try {
@@ -247,6 +250,13 @@ export function registerInvoiceRoutes(app: Express, pool: DbPool): void {
         return res.status(409).json({ error: 'Another invoice already uses that invoice number.' });
       }
       const facts = invoiceFacts(invoice);
+      const closed =
+        (await closedMonthMessage(pool, user.organizationId, existing.invoice_date)) ??
+        (await closedMonthMessage(pool, user.organizationId, facts.invoiceDate));
+      if (closed) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: closed });
+      }
       await client.query(
         `UPDATE invoices
          SET invoice_number = $3, data = $4::jsonb, buyer_name = $5, destination_country = $6,
@@ -284,6 +294,8 @@ export function registerInvoiceRoutes(app: Express, pool: DbPool): void {
     if (next === 'cancelled' && existing.status !== 'draft' && user.role !== 'admin') {
       return res.status(403).json({ error: 'Only company admins can cancel an issued invoice.' });
     }
+    const closed = await closedMonthMessage(pool, user.organizationId, existing.invoice_date);
+    if (closed) return res.status(409).json({ error: closed });
 
     await pool.query(
       'UPDATE invoices SET status = $3, updated_at = now() WHERE id = $1 AND organization_id = $2',
@@ -298,6 +310,10 @@ export function registerInvoiceRoutes(app: Express, pool: DbPool): void {
     if (!isUuid(req.params.id)) {
       return res.status(404).json({ error: 'Invoice not found.' });
     }
+    const existing = await loadInvoice(pool, req.params.id, currentUser(res).organizationId);
+    if (!existing) return res.status(404).json({ error: 'Invoice not found.' });
+    const closed = await closedMonthMessage(pool, currentUser(res).organizationId, existing.invoice_date);
+    if (closed) return res.status(409).json({ error: closed });
     const result = await pool.query(
       'DELETE FROM invoices WHERE id = $1 AND organization_id = $2',
       [req.params.id, currentUser(res).organizationId],

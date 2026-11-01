@@ -32,7 +32,7 @@ function splitList(value: string): string[] {
   return value.split(',').map((entry) => entry.trim()).filter(Boolean);
 }
 
-export const RemindersPage: React.FC = () => {
+export const RemindersPage: React.FC<{ readOnly?: boolean }> = ({ readOnly = false }) => {
   const [invoices, setInvoices] = useState<OverdueInvoice[] | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [smtp, setSmtp] = useState<SmtpConfig>(DEFAULT_SMTP);
@@ -228,10 +228,12 @@ export const RemindersPage: React.FC = () => {
                     <p className="font-semibold tabular-nums">{formatUsd(row.dueUsd)}</p>
                     <p className="text-xs text-slate-500 tabular-nums">of {formatUsd(row.totalUsd)}</p>
                   </div>
-                  <button type="button" onClick={() => draft(row)} disabled={busy !== null} className={secondaryButton}>
-                    <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
-                    {busy === row.id ? 'Drafting...' : 'Draft reminder'}
-                  </button>
+                  {!readOnly && (
+                    <button type="button" onClick={() => draft(row)} disabled={busy !== null} className={secondaryButton}>
+                      <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                      {busy === row.id ? 'Drafting...' : 'Draft reminder'}
+                    </button>
+                  )}
                 </div>
               </li>
             ))}

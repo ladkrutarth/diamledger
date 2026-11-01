@@ -22,6 +22,7 @@ import {
   Building2,
   Users,
   CircleUser,
+  Landmark,
 } from 'lucide-react';
 import { InvoiceState } from './types/invoice';
 import { A1005InvoicePreview } from './components/A1005InvoicePreview';
@@ -41,6 +42,8 @@ import { BuyersPage } from './components/pages/BuyersPage';
 import { CompanyPage } from './components/pages/CompanyPage';
 import { TeamPage } from './components/pages/TeamPage';
 import { AccountPage } from './components/pages/AccountPage';
+import { TaxPage } from './components/pages/TaxPage';
+import { InvoiceTaxPanel } from './components/InvoiceTaxPanel';
 import {
   api,
   errorMessage,
@@ -51,12 +54,14 @@ import {
   type InvoiceRecord,
   type InvoiceStatus,
   type InvoiceSummary,
+  type WorkspaceCompany,
+  ROLE_LABEL,
 } from './api/client';
 import { COMPANY_NAME, PRODUCT_NAME, PRODUCT_TAGLINE } from './brand';
 import { applyBuyer, buildNewInvoice, buyerFromConsignee, duplicateInvoice } from './utils/invoiceDefaults';
 
-type View = 'workspace' | 'dashboard' | 'invoices' | 'reminders' | 'buyers' | 'company' | 'team' | 'account';
-type Module = 'editor' | 'payments' | 'erp' | 'email';
+type View = 'workspace' | 'dashboard' | 'invoices' | 'reminders' | 'buyers' | 'company' | 'team' | 'account' | 'tax';
+type Module = 'editor' | 'payments' | 'erp' | 'email' | 'tax';
 
 function readResetToken(): string | null {
   return new URLSearchParams(window.location.search).get('reset');
@@ -81,9 +86,13 @@ export default function App() {
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [companies, setCompanies] = useState<WorkspaceCompany[]>([]);
 
   const isAdmin = user?.role === 'admin';
-  const locked = status !== 'draft';
+  const isCharteredAccountant = user?.role === 'ca';
+  const canWrite = Boolean(user && user.role !== 'ca');
+  const canUseTaxDesk = user?.role === 'admin' || user?.role === 'tax' || user?.role === 'ca';
+  const locked = status !== 'draft' || !canWrite;
 
   useEffect(() => {
     if (resetToken) {
@@ -104,6 +113,28 @@ export default function App() {
       window.clearTimeout(timer);
     };
   }, [resetToken]);
+
+  useEffect(() => {
+    if (!user) return;
+    api<{ companies: WorkspaceCompany[] }>('/api/workspace/companies')
+      .then((result) => setCompanies(result.companies))
+      .catch(() => setCompanies([]));
+  }, [user?.id]);
+
+  const switchCompany = async (organizationId: string) => {
+    try {
+      const result = await api<{ user: AuthUser }>('/api/workspace/switch', sendJson('POST', { organizationId }));
+      setInvoiceId(null);
+      setStatus('draft');
+      setInvoice(buildNewInvoice(null));
+      setActiveModule('editor');
+      if (view === 'workspace' || view === 'team' || view === 'company') setView('dashboard');
+      setUser(result.user);
+      setDataVersion((version) => version + 1);
+    } catch (error) {
+      window.alert(errorMessage(error, 'Could not switch company.'));
+    }
+  };
 
   const refreshInvoices = useCallback(async () => {
     const result = await api<{ invoices: InvoiceSummary[] }>('/api/invoices');
@@ -315,6 +346,9 @@ export default function App() {
         ['dashboard', 'Dashboard', <LayoutDashboard className="w-4 h-4" />],
         ['invoices', 'Invoices', <ScrollText className="w-4 h-4" />],
         ['reminders', 'Collections', <Bell className="w-4 h-4" />],
+        ...(canUseTaxDesk
+          ? ([['tax', 'Tax desk', <Landmark className="w-4 h-4" />]] as Array<[View, string, React.ReactNode]>)
+          : []),
       ],
     },
     {
@@ -340,6 +374,7 @@ export default function App() {
     ['payments', 'Payments', <Wallet className="w-3.5 h-3.5" />],
     ['erp', 'Accounts export', <Layers className="w-3.5 h-3.5" />],
     ['email', 'Email', <Send className="w-3.5 h-3.5" />],
+    ['tax', 'Tax papers', <Landmark className="w-3.5 h-3.5" />],
   ];
 
   const canCancel = status === 'draft' ? Boolean(invoiceId) : status !== 'cancelled' && isAdmin;
@@ -373,9 +408,27 @@ export default function App() {
               <span className="block text-[11px] text-stone-400">{PRODUCT_TAGLINE}</span>
             </div>
           </div>
-          <p className="mt-4 text-xs font-medium text-stone-300 truncate" title={user.organizationName || COMPANY_NAME}>
-            {user.organizationName || COMPANY_NAME}
-          </p>
+          {companies.length > 1 ? (
+            <label className="mt-4 block">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-stone-500">Company</span>
+              <select
+                value={user.organizationId}
+                onChange={(event) => switchCompany(event.target.value)}
+                className="mt-1 w-full rounded-md border border-white/15 bg-stone-900 px-2 py-1.5 text-xs font-medium text-stone-100"
+              >
+                {companies.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.name}
+                    {entry.home ? '' : ` (${ROLE_LABEL[entry.role]})`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <p className="mt-4 text-xs font-medium text-stone-300 truncate" title={user.organizationName || COMPANY_NAME}>
+              {user.organizationName || COMPANY_NAME}
+            </p>
+          )}
         </div>
         <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
           {navGroups.map((group) => (
@@ -405,7 +458,7 @@ export default function App() {
           <button onClick={handleLogout} className="px-2.5 py-1.5 text-xs font-semibold text-stone-600 hover:text-stone-950">
             Log out
           </button>
-          {view === 'workspace' && (
+          {view === 'workspace' && canWrite && (
             <>
               <button
                 onClick={() => setIsAiParserOpen(true)}
@@ -422,15 +475,17 @@ export default function App() {
               >
                 {isSaving ? 'Saving...' : 'Save'}
               </button>
-              <button
-                onClick={handleTopDownload}
-                disabled={isDownloading}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-stone-900 hover:bg-stone-800 rounded-lg disabled:opacity-50"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>{isDownloading ? 'Preparing...' : 'Download PDF'}</span>
-              </button>
             </>
+          )}
+          {view === 'workspace' && (
+            <button
+              onClick={handleTopDownload}
+              disabled={isDownloading}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-stone-900 hover:bg-stone-800 rounded-lg disabled:opacity-50"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{isDownloading ? 'Preparing...' : 'Download PDF'}</span>
+            </button>
           )}
         </div>
       </header>
@@ -453,13 +508,23 @@ export default function App() {
         <InvoicesPage
           key={`${dataVersion}-${invoiceListStatus}`}
           isAdmin={isAdmin}
+          canWrite={canWrite}
           initialStatus={invoiceListStatus}
           onOpen={handleOpenInvoice}
           onNew={handleNewInvoice}
         />
       )}
-      {view === 'reminders' && <RemindersPage key={dataVersion} />}
-      {view === 'buyers' && <BuyersPage />}
+      {view === 'reminders' && <RemindersPage key={dataVersion} readOnly={!canWrite} />}
+      {view === 'buyers' && <BuyersPage readOnly={!canWrite} />}
+      {view === 'tax' && canUseTaxDesk && (
+        <TaxPage
+          key={dataVersion}
+          isCharteredAccountant={isCharteredAccountant}
+          canWrite={canWrite}
+          canManage={isAdmin || user.role === 'tax'}
+          onOpen={handleOpenInvoice}
+        />
+      )}
       {view === 'company' && (
         <CompanyPage
           isAdmin={isAdmin}
@@ -512,18 +577,22 @@ export default function App() {
                   ))}
                 </select>
                 <StatusBadge status={status} />
-                <button
-                  onClick={handleNewInvoice}
-                  className="px-2 py-1 text-xs font-semibold rounded-md border border-slate-300 hover:bg-slate-50"
-                >
-                  New
-                </button>
-                <button
-                  onClick={handleDuplicate}
-                  className="px-2 py-1 text-xs font-semibold rounded-md border border-slate-300 hover:bg-slate-50"
-                >
-                  Duplicate
-                </button>
+                {canWrite && (
+                  <>
+                    <button
+                      onClick={handleNewInvoice}
+                      className="px-2 py-1 text-xs font-semibold rounded-md border border-slate-300 hover:bg-slate-50"
+                    >
+                      New
+                    </button>
+                    <button
+                      onClick={handleDuplicate}
+                      className="px-2 py-1 text-xs font-semibold rounded-md border border-slate-300 hover:bg-slate-50"
+                    >
+                      Duplicate
+                    </button>
+                  </>
+                )}
               </div>
 
               <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-slate-50">
@@ -547,14 +616,16 @@ export default function App() {
                     </option>
                   ))}
                 </select>
-                <button
-                  onClick={handleSaveBuyer}
-                  disabled={!invoice.consignee.companyName.trim()}
-                  className="px-2 py-1 text-xs font-semibold rounded-md border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
-                >
-                  Save buyer
-                </button>
-                {status === 'draft' && (
+                {canWrite && (
+                  <button
+                    onClick={handleSaveBuyer}
+                    disabled={!invoice.consignee.companyName.trim()}
+                    className="px-2 py-1 text-xs font-semibold rounded-md border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Save buyer
+                  </button>
+                )}
+                {canWrite && status === 'draft' && (
                   <button
                     onClick={() => changeStatus('issued')}
                     disabled={isSaving}
@@ -563,7 +634,7 @@ export default function App() {
                     Issue
                   </button>
                 )}
-                {canCancel && (
+                {canWrite && canCancel && (
                   <button
                     onClick={() => changeStatus('cancelled')}
                     disabled={isSaving}
@@ -619,6 +690,7 @@ export default function App() {
                     invoiceId={invoiceId}
                     status={status}
                     isAdmin={isAdmin}
+                    readOnly={!canWrite}
                     onChanged={async () => {
                       if (invoiceId) {
                         const record = await api<InvoiceRecord>(`/api/invoices/${invoiceId}`);
@@ -630,6 +702,13 @@ export default function App() {
                 )}
                 {activeModule === 'erp' && <ErpSyncPanel invoice={invoice} />}
                 {activeModule === 'email' && <EmailDispatchPanel invoice={invoice} />}
+                {activeModule === 'tax' && (
+                  <InvoiceTaxPanel
+                    invoiceId={invoiceId}
+                    canEdit={canWrite}
+                    isCharteredAccountant={isCharteredAccountant}
+                  />
+                )}
               </div>
             </aside>
 
