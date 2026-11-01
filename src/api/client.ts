@@ -2,10 +2,12 @@ import type { BankDetails, ConsigneeDetails, ExporterDetails, InvoiceState } fro
 
 export class ApiError extends Error {
   status: number;
+  body: Record<string, unknown> | null;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, body: Record<string, unknown> | null = null) {
     super(message);
     this.status = status;
+    this.body = body;
   }
 }
 
@@ -76,7 +78,11 @@ export type PaymentState = {
 
 export type Dashboard = {
   thisMonth: { count: number; totalUsd: number; totalCarats: number };
+  collectedThisMonth: { count: number; totalUsd: number };
+  months: Array<{ month: string; label: string; count: number; totalUsd: number }>;
   byCountry: Array<{ country: string; count: number; totalUsd: number }>;
+  aging: Array<{ key: string; label: string; count: number; dueUsd: number }>;
+  topBuyers: Array<{ buyer: string; invoices: number; dueUsd: number; overdueUsd: number }>;
   unpaid: {
     count: number;
     dueUsd: number;
@@ -85,12 +91,104 @@ export type Dashboard = {
       invoiceNumber: string;
       buyerName: string;
       invoiceDate: string | null;
+      dueDate: string;
+      daysOverdue: number;
+      overdue: boolean;
       totalUsd: number;
       paidUsd: number;
       dueUsd: number;
     }>;
   };
   statusCounts: Record<InvoiceStatus, number>;
+};
+
+export type OverdueInvoice = {
+  id: string;
+  invoiceNumber: string;
+  buyerName: string;
+  buyerEmail: string;
+  invoiceDate: string | null;
+  dueDate: string;
+  daysOverdue: number;
+  totalUsd: number;
+  paidUsd: number;
+  dueUsd: number;
+  remindersSent: number;
+  lastReminderAt: string | null;
+  recentlyReminded: boolean;
+};
+
+export type ReminderFigures = {
+  invoiceNumber: string;
+  invoiceDate: string | null;
+  dueDate: string;
+  daysOverdue: number;
+  totalUsd: number;
+  paidUsd: number;
+  dueUsd: number;
+  paymentTerms: string;
+  exporterName: string;
+  signatoryName: string;
+  signatoryDesignation: string;
+  bank: { bankName: string; accountNumber: string; swiftCode: string; iban: string };
+};
+
+export type ReminderDraft = {
+  id: string;
+  invoiceId: string;
+  status: 'draft';
+  source: 'model' | 'template';
+  tone: 'gentle' | 'firm' | 'final';
+  subject: string;
+  greeting: string;
+  paragraphs: string[];
+  fullSubject: string;
+  html: string;
+  recipients: string[];
+  figures: ReminderFigures;
+  createdAt: string;
+};
+
+export type ReminderSent = { id: string; status: 'sent'; mode: 'preview_simulated' | 'live_smtp'; sentAt: string };
+
+export type AssistantSource = { kind: 'invoice' | 'buyer' | 'summary'; id?: string; label: string };
+
+export type AssistantActionStatus = 'proposed' | 'confirmed' | 'rejected' | 'failed';
+
+export type AssistantAction = {
+  id: string;
+  kind: 'record_payment' | 'draft_reminder';
+  status: AssistantActionStatus;
+  payload: {
+    invoiceNumber?: string;
+    buyer?: string;
+    amountUsd?: number;
+    paidOn?: string;
+    reference?: string;
+    dueUsd?: number;
+    dueUsdAtProposal?: number;
+    daysOverdue?: number;
+    remindedInLastWeek?: boolean;
+  };
+  result?: { error?: string; dueUsd?: number; invoiceStatus?: string; reminderId?: string; subject?: string };
+  createdAt: string;
+};
+
+export type AssistantMessage = { id: string; role: 'user' | 'model'; text: string; createdAt: string };
+
+export type AssistantSession = {
+  id: string;
+  createdAt: string;
+  messages: AssistantMessage[];
+  actions: AssistantAction[];
+};
+
+export type AssistantTurn = {
+  reply: string;
+  sources: AssistantSource[];
+  actions: AssistantAction[];
+  ungrounded: boolean;
+  stepLimitReached: boolean;
 };
 
 export type TeamMember = { id: string; email: string; role: Role; createdAt: string };
@@ -106,7 +204,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   const text = await response.text();
-  let body: { error?: string } | null = null;
+  let body: ({ error?: string } & Record<string, unknown>) | null = null;
   if (text) {
     try {
       body = JSON.parse(text);
@@ -118,7 +216,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
   if (!response.ok) {
-    throw new ApiError(response.status, body?.error || 'Request failed.');
+    throw new ApiError(response.status, body?.error || 'Request failed.', body);
   }
   return body as T;
 }

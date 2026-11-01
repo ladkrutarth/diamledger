@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Gem } from 'lucide-react';
 import { ApiError, api, type AuthUser } from '../api/client';
+import { COMPANY_NAME, PRODUCT_NAME, PRODUCT_TAGLINE } from '../brand';
 
 type Mode = 'sign-in' | 'create-account' | 'forgot' | 'reset';
 
@@ -113,13 +114,32 @@ export const LoginPage: React.FC<Props> = ({ onSuccess, resetToken, onResetFinis
   const newPassword = mode === 'create-account' || mode === 'reset';
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-800 flex items-center justify-center px-4">
-      <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl shadow-sm p-8">
-        <div className="flex items-center gap-2.5 mb-6">
-          <div className="w-8 h-8 rounded-lg bg-slate-950 flex items-center justify-center text-white">
-            <Gem className="w-4 h-4 text-sky-400" />
+    <div className="min-h-screen bg-slate-100 text-stone-800 lg:grid lg:grid-cols-2">
+      <aside className="hidden lg:flex flex-col justify-between bg-stone-950 text-stone-100 px-12 py-12">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-white/10 flex items-center justify-center">
+            <Gem className="w-4 h-4 text-amber-200" />
           </div>
-          <span className="text-base font-bold tracking-tight text-slate-950">DiamondX-A1005</span>
+          <div>
+            <p className="text-sm font-semibold tracking-tight">{PRODUCT_NAME}</p>
+            <p className="text-xs text-stone-400">{PRODUCT_TAGLINE}</p>
+          </div>
+        </div>
+        <div>
+          <p className="text-3xl font-semibold tracking-tight leading-tight">{COMPANY_NAME}</p>
+          <p className="mt-4 max-w-sm text-sm leading-relaxed text-stone-300">
+            Prepare the commercial invoice, see what each buyer still owes, and follow up when a payment is late.
+          </p>
+        </div>
+        <p className="text-xs text-stone-500">Invoices, payments, and collections in one desk.</p>
+      </aside>
+      <div className="flex items-center justify-center px-4 py-10">
+      <div className="w-full max-w-md bg-white border border-stone-200 rounded-2xl p-8">
+        <div className="flex items-center gap-2.5 mb-6 lg:hidden">
+          <div className="w-8 h-8 rounded-lg bg-stone-950 flex items-center justify-center text-white">
+            <Gem className="w-4 h-4 text-amber-200" />
+          </div>
+          <span className="text-base font-semibold tracking-tight text-stone-950">{PRODUCT_NAME}</span>
         </div>
 
         <h1 className="text-xl font-bold text-slate-950">{copy.title}</h1>
@@ -211,8 +231,9 @@ export const LoginPage: React.FC<Props> = ({ onSuccess, resetToken, onResetFinis
         {mode === 'sign-in' && SHOW_DEMO_LOGIN && (
           <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-700">
             <p className="font-semibold text-slate-900">Demo account</p>
-            <p className="mt-1">Email: owner@example.com</p>
+            <p className="mt-1">Owner: owner@example.com</p>
             <p>Password: password123</p>
+            <p className="mt-1 text-slate-600">The company also has 2 other admins and 20 members. They use the same password.</p>
             <button
               type="button"
               disabled={submitting}
@@ -231,6 +252,7 @@ export const LoginPage: React.FC<Props> = ({ onSuccess, resetToken, onResetFinis
         >
           {mode === 'sign-in' ? 'Need an account? Create one' : 'Back to sign in'}
         </button>
+      </div>
       </div>
     </div>
   );

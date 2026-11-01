@@ -1,6 +1,6 @@
 import type { Express } from 'express';
 import type { DbPool } from './db.js';
-import { asyncHandler, currentUser, requireAdmin, requireUser, isUuid } from './http.js';
+import { asyncHandler, currentUser, requireAdmin, requireUser, isUuid, type CurrentUser } from './http.js';
 import { refreshPaidStatus } from './invoices.js';
 
 type PaymentRow = {
@@ -56,6 +56,49 @@ async function paymentState(pool: DbPool, invoiceId: string) {
   };
 }
 
+export type PaymentInput = { amountUsd?: unknown; paidOn?: unknown; reference?: unknown };
+
+export type PaymentResult =
+  | { ok: true; state: Awaited<ReturnType<typeof paymentState>> }
+  | { ok: false; status: 400 | 404 | 409; error: string };
+
+export async function recordPayment(
+  pool: DbPool,
+  user: CurrentUser,
+  invoiceId: string,
+  input: PaymentInput,
+  options: { withinBalance?: boolean } = {},
+): Promise<PaymentResult> {
+  const invoice = await findInvoice(pool, invoiceId, user.organizationId);
+  if (!invoice) {
+    return { ok: false, status: 404, error: 'Invoice not found.' };
+  }
+  if (invoice.status !== 'issued' && invoice.status !== 'paid') {
+    return { ok: false, status: 409, error: 'Issue the invoice before recording payments.' };
+  }
+
+  const amount = Math.round(Number(input.amountUsd) * 100) / 100;
+  const paidOn = typeof input.paidOn === 'string' ? input.paidOn : '';
+  const reference = typeof input.reference === 'string' ? input.reference.trim().slice(0, 200) : '';
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 1e11) {
+    return { ok: false, status: 400, error: 'Enter a payment amount greater than zero.' };
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn) || Number.isNaN(Date.parse(paidOn))) {
+    return { ok: false, status: 400, error: 'Enter the date the payment was received.' };
+  }
+  if (options.withinBalance && amount > (await paymentState(pool, invoice.id)).dueUsd) {
+    return { ok: false, status: 409, error: 'The payment is more than the balance due on this invoice.' };
+  }
+
+  await pool.query(
+    `INSERT INTO payments (invoice_id, organization_id, amount_usd, paid_on, reference, created_by)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [invoice.id, user.organizationId, amount, paidOn, reference, user.id],
+  );
+  await refreshPaidStatus(pool, invoice.id);
+  return { ok: true, state: await paymentState(pool, invoice.id) };
+}
+
 export function registerPaymentRoutes(app: Express, pool: DbPool): void {
   app.get('/api/invoices/:id/payments', requireUser, asyncHandler(async (req, res) => {
     const invoice = await findInvoice(pool, req.params.id, currentUser(res).organizationId);
@@ -66,32 +109,11 @@ export function registerPaymentRoutes(app: Express, pool: DbPool): void {
   }));
 
   app.post('/api/invoices/:id/payments', requireUser, asyncHandler(async (req, res) => {
-    const user = currentUser(res);
-    const invoice = await findInvoice(pool, req.params.id, user.organizationId);
-    if (!invoice) {
-      return res.status(404).json({ error: 'Invoice not found.' });
+    const result = await recordPayment(pool, currentUser(res), req.params.id, req.body ?? {});
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
     }
-    if (invoice.status !== 'issued' && invoice.status !== 'paid') {
-      return res.status(409).json({ error: 'Issue the invoice before recording payments.' });
-    }
-
-    const amount = Math.round(Number(req.body?.amountUsd) * 100) / 100;
-    const paidOn = typeof req.body?.paidOn === 'string' ? req.body.paidOn : '';
-    const reference = typeof req.body?.reference === 'string' ? req.body.reference.trim().slice(0, 200) : '';
-    if (!Number.isFinite(amount) || amount <= 0 || amount > 1e11) {
-      return res.status(400).json({ error: 'Enter a payment amount greater than zero.' });
-    }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(paidOn) || Number.isNaN(Date.parse(paidOn))) {
-      return res.status(400).json({ error: 'Enter the date the payment was received.' });
-    }
-
-    await pool.query(
-      `INSERT INTO payments (invoice_id, organization_id, amount_usd, paid_on, reference, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [invoice.id, user.organizationId, amount, paidOn, reference, user.id],
-    );
-    await refreshPaidStatus(pool, invoice.id);
-    return res.status(201).json(await paymentState(pool, invoice.id));
+    return res.status(201).json(result.state);
   }));
 
   app.delete('/api/invoices/:id/payments/:paymentId', requireAdmin, asyncHandler(async (req, res) => {

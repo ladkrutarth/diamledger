@@ -2,7 +2,7 @@ import { InvoiceState } from '../types/invoice';
 
 export const SURAT_TO_ANTWERP_PRESET: InvoiceState = {
   exporter: {
-    companyName: 'xyz LLC',
+    companyName: 'Meridian Diamond Exports',
     addressLine1: 'Tower B, 12th Floor, Surat Diamond Bourse (SDB)',
     addressLine2: 'DREAM City, Khajod',
     city: 'Surat',
@@ -41,6 +41,7 @@ export const SURAT_TO_ANTWERP_PRESET: InvoiceState = {
     incoterms: 'CIF',
     incotermLocation: 'Antwerp (ANR), Belgium',
     paymentTerms: '100% Against Irrevocable Letter of Credit at 60 Days',
+    creditDays: 60,
     portOfLoading: 'Air Cargo Complex, Sahar, Mumbai (INBOM4)',
     portOfDischarge: 'Antwerp International Airport (ANR) / Brussels (BRU)',
     countryOfOrigin: 'INDIA',
@@ -188,6 +189,7 @@ export const MUMBAI_TO_NY_PRESET: InvoiceState = {
     incoterms: 'CIF',
     incotermLocation: 'JFK New York, USA',
     paymentTerms: 'Wire Transfer T/T within 30 Days of Customs Delivery',
+    creditDays: 30,
     portOfLoading: 'Air Cargo Complex, Sahar, Mumbai (INBOM4)',
     portOfDischarge: 'John F. Kennedy International Airport (JFK), New York',
     countryOfOrigin: 'INDIA',
@@ -320,6 +322,7 @@ export const SURAT_TO_DUBAI_PRESET: InvoiceState = {
     incoterms: 'CIF',
     incotermLocation: 'Dubai (DXB), UAE',
     paymentTerms: '100% Sight Draft / Bank Transfer against Delivery Order',
+    creditDays: 0,
     portOfLoading: 'Air Cargo Complex, Surat International Airport (STV)',
     portOfDischarge: 'Dubai International Airport Cargo Village (DXB)',
     countryOfOrigin: 'INDIA',

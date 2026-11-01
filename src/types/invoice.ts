@@ -72,6 +72,7 @@ export interface ShipmentDetails {
   incoterms: 'CIF' | 'FOB' | 'C&F' | 'DAP' | 'EXW';
   incotermLocation: string;
   paymentTerms: string;
+  creditDays: number; // days after the invoice date before payment is overdue
   portOfLoading: string;
   portOfDischarge: string;
   countryOfOrigin: string;

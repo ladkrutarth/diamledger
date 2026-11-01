@@ -2,7 +2,7 @@ import type { Express } from 'express';
 import nodemailer, { type SendMailOptions } from 'nodemailer';
 import type { DbPool } from './db.js';
 import { isValidEmail } from './auth.js';
-import { asyncHandler, currentUser, isRecord, requireUser } from './http.js';
+import { asyncHandler, currentUser, isRecord, requireUser, type CurrentUser } from './http.js';
 
 export const MAX_RECIPIENTS = 10;
 const MAX_ATTACHMENTS = 2;
@@ -39,7 +39,7 @@ export const createSmtpTransport: CreateMailTransport = (settings) =>
     socketTimeout: 20_000,
   });
 
-class InputError extends Error {}
+export class InputError extends Error {}
 
 function text(value: unknown, max: number, label: string): string {
   if (value === undefined || value === null) return '';
@@ -130,10 +130,67 @@ export function parseEmailRequest(body: unknown) {
   };
 }
 
+export type EmailRequest = ReturnType<typeof parseEmailRequest>;
+
+export type DispatchResult =
+  | { ok: true; mode: 'preview_simulated' | 'live_smtp'; messageId: string | null; accepted: unknown[] }
+  | { ok: false; status: 400 | 502; error: string };
+
+export async function dispatchEmail(
+  pool: DbPool,
+  user: CurrentUser,
+  request: EmailRequest,
+  createTransport: CreateMailTransport,
+): Promise<DispatchResult> {
+  const { settings } = request;
+  let mode: 'preview_simulated' | 'live_smtp' = 'preview_simulated';
+  let messageId: string | null = null;
+  let accepted: unknown[] = [];
+
+  if (settings) {
+    if (request.fromEmail && !isValidEmail(request.fromEmail)) {
+      return { ok: false, status: 400, error: 'Sender email is invalid.' };
+    }
+    try {
+      const info = await createTransport(settings).sendMail({
+        from: { name: request.fromName || user.organizationName, address: request.fromEmail || settings.user },
+        to: request.recipients,
+        cc: request.cc.length ? request.cc : undefined,
+        subject: request.subject,
+        html: request.htmlBody,
+        attachments: request.attachments,
+      });
+      mode = 'live_smtp';
+      messageId = info.messageId ?? null;
+      accepted = info.accepted ?? [];
+    } catch (error: any) {
+      console.error('SMTP dispatch failed:', error?.message);
+      return { ok: false, status: 502, error: `The mail server rejected the email: ${error?.message || 'unknown error'}` };
+    }
+  }
+
+  await pool.query(
+    `INSERT INTO email_dispatches
+       (organization_id, user_id, mode, smtp_host, recipients, cc, subject, invoice_number, attachment_count, message_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    [user.organizationId, user.id, mode, settings?.host ?? null, request.recipients, request.cc, request.subject,
+      request.invoiceNumber, request.attachments.length, messageId],
+  );
+  console.info(JSON.stringify({
+    event: 'email_dispatch',
+    mode,
+    userId: user.id,
+    organizationId: user.organizationId,
+    recipients: request.recipients.length + request.cc.length,
+    invoiceNumber: request.invoiceNumber,
+  }));
+  return { ok: true, mode, messageId, accepted };
+}
+
 export function registerEmailRoutes(app: Express, pool: DbPool, createTransport: CreateMailTransport): void {
   app.post('/api/send-email', requireUser, asyncHandler(async (req, res) => {
     const user = currentUser(res);
-    let request: ReturnType<typeof parseEmailRequest>;
+    let request: EmailRequest;
     try {
       request = parseEmailRequest(req.body);
     } catch (error) {
@@ -141,48 +198,11 @@ export function registerEmailRoutes(app: Express, pool: DbPool, createTransport:
       throw error;
     }
 
-    const { settings } = request;
-    let mode: 'preview_simulated' | 'live_smtp' = 'preview_simulated';
-    let messageId: string | null = null;
-    let accepted: unknown[] = [];
-
-    if (settings) {
-      if (request.fromEmail && !isValidEmail(request.fromEmail)) {
-        return res.status(400).json({ error: 'Sender email is invalid.' });
-      }
-      try {
-        const info = await createTransport(settings).sendMail({
-          from: { name: request.fromName || user.organizationName, address: request.fromEmail || settings.user },
-          to: request.recipients,
-          cc: request.cc.length ? request.cc : undefined,
-          subject: request.subject,
-          html: request.htmlBody,
-          attachments: request.attachments,
-        });
-        mode = 'live_smtp';
-        messageId = info.messageId ?? null;
-        accepted = info.accepted ?? [];
-      } catch (error: any) {
-        console.error('SMTP dispatch failed:', error?.message);
-        return res.status(502).json({ error: `The mail server rejected the email: ${error?.message || 'unknown error'}` });
-      }
+    const result = await dispatchEmail(pool, user, request, createTransport);
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error });
     }
-
-    await pool.query(
-      `INSERT INTO email_dispatches
-         (organization_id, user_id, mode, smtp_host, recipients, cc, subject, invoice_number, attachment_count, message_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [user.organizationId, user.id, mode, settings?.host ?? null, request.recipients, request.cc, request.subject,
-        request.invoiceNumber, request.attachments.length, messageId],
-    );
-    console.info(JSON.stringify({
-      event: 'email_dispatch',
-      mode,
-      userId: user.id,
-      organizationId: user.organizationId,
-      recipients: request.recipients.length + request.cc.length,
-      invoiceNumber: request.invoiceNumber,
-    }));
+    const { mode, messageId, accepted } = result;
 
     if (mode === 'preview_simulated') {
       return res.json({

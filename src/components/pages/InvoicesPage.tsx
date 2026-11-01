@@ -7,12 +7,13 @@ import { Card, Notice, Page, dangerButton, inputClass, primaryButton, secondaryB
 
 interface Props {
   isAdmin: boolean;
+  initialStatus?: string;
   onOpen: (id: string) => void;
   onNew: () => void;
 }
 
-export const InvoicesPage: React.FC<Props> = ({ isAdmin, onOpen, onNew }) => {
-  const [filters, setFilters] = useState({ q: '', status: '', from: '', to: '' });
+export const InvoicesPage: React.FC<Props> = ({ isAdmin, initialStatus = '', onOpen, onNew }) => {
+  const [filters, setFilters] = useState({ q: '', status: initialStatus, from: '', to: '' });
   const [invoices, setInvoices] = useState<InvoiceSummary[] | null>(null);
   const [error, setError] = useState('');
 
@@ -51,7 +52,7 @@ export const InvoicesPage: React.FC<Props> = ({ isAdmin, onOpen, onNew }) => {
   return (
     <Page
       title="Invoices"
-      description="Search every invoice your company has saved."
+      description="Every shipment invoice, from draft to paid. Open a row to see the document, payments, and what is still due."
       actions={
         <>
           <a href={`/api/invoices/export${query}`} className={secondaryButton} download>
@@ -122,7 +123,7 @@ export const InvoicesPage: React.FC<Props> = ({ isAdmin, onOpen, onNew }) => {
                     <td className="py-2 pr-3 text-slate-600">{row.destinationCountry || '—'}</td>
                     <td className="py-2 pr-3 text-right tabular-nums">{formatCarats(row.totalCarats)}</td>
                     <td className="py-2 pr-3 text-right tabular-nums">{formatUsd(row.totalUsd)}</td>
-                    <td className="py-2 pr-3 text-right tabular-nums">
+                    <td className={`py-2 pr-3 text-right tabular-nums ${row.status === 'issued' && row.dueUsd > 0 ? 'font-semibold text-amber-900' : ''}`}>
                       {row.status === 'issued' ? formatUsd(row.dueUsd) : '—'}
                     </td>
                     <td className="py-2 pr-3"><StatusBadge status={row.status} /></td>

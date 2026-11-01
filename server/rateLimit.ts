@@ -119,6 +119,30 @@ const RULES: LimitRule[] = [
     message: 'AI parsing limit reached: 60 manifests per hour. Try again later.',
     key: userOrIp,
   },
+  {
+    path: '/api/reminders/draft',
+    name: 'reminder-draft',
+    windowMinutes: 60,
+    limit: 60,
+    message: 'Reminder drafting limit reached: 60 drafts per hour. Try again later.',
+    key: userOrIp,
+  },
+  {
+    path: '/api/reminders/:id/send',
+    name: 'reminder-send',
+    windowMinutes: 60,
+    limit: 30,
+    message: 'Reminder limit reached: 30 reminders per hour. Try again later.',
+    key: userOrIp,
+  },
+  {
+    path: '/api/assistant/sessions/:id/messages',
+    name: 'assistant-message',
+    windowMinutes: 60,
+    limit: 30,
+    message: 'Assistant limit reached: 30 questions per hour. Try again later.',
+    key: userOrIp,
+  },
 ];
 
 export function registerRateLimits(app: Express, pool: DbPool): void {

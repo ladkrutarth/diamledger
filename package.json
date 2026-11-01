@@ -9,6 +9,7 @@
     "build": "vite build",
     "build:server": "esbuild server.ts server/migrate.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outdir=dist-server",
     "migrate": "tsx server/migrate.ts",
+    "seed:demo": "tsx server/seed.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit",

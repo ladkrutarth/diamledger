@@ -14,11 +14,20 @@ import {
   Gem,
   Wallet,
   Lock,
+  Bot,
+  LayoutDashboard,
+  ScrollText,
+  Bell,
+  Contact,
+  Building2,
+  Users,
+  CircleUser,
 } from 'lucide-react';
 import { InvoiceState } from './types/invoice';
 import { A1005InvoicePreview } from './components/A1005InvoicePreview';
 import { DataEntryPanel } from './components/DataEntryPanel';
 import { AiManifestParser } from './components/AiManifestParser';
+import { AssistantPanel } from './components/AssistantPanel';
 import { ErpSyncPanel } from './components/ErpSyncPanel';
 import { EmailDispatchPanel } from './components/EmailDispatchPanel';
 import { exportElementToPdf } from './utils/pdfGenerator';
@@ -27,6 +36,7 @@ import { PaymentsPanel } from './components/PaymentsPanel';
 import { StatusBadge } from './components/StatusBadge';
 import { InvoicesPage } from './components/pages/InvoicesPage';
 import { DashboardPage } from './components/pages/DashboardPage';
+import { RemindersPage } from './components/pages/RemindersPage';
 import { BuyersPage } from './components/pages/BuyersPage';
 import { CompanyPage } from './components/pages/CompanyPage';
 import { TeamPage } from './components/pages/TeamPage';
@@ -42,9 +52,10 @@ import {
   type InvoiceStatus,
   type InvoiceSummary,
 } from './api/client';
+import { COMPANY_NAME, PRODUCT_NAME, PRODUCT_TAGLINE } from './brand';
 import { applyBuyer, buildNewInvoice, buyerFromConsignee, duplicateInvoice } from './utils/invoiceDefaults';
 
-type View = 'workspace' | 'dashboard' | 'invoices' | 'buyers' | 'company' | 'team' | 'account';
+type View = 'workspace' | 'dashboard' | 'invoices' | 'reminders' | 'buyers' | 'company' | 'team' | 'account';
 type Module = 'editor' | 'payments' | 'erp' | 'email';
 
 function readResetToken(): string | null {
@@ -55,7 +66,7 @@ export default function App() {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [resetToken, setResetToken] = useState<string | null>(readResetToken);
-  const [view, setView] = useState<View>('workspace');
+  const [view, setView] = useState<View>('dashboard');
   const [company, setCompany] = useState<Company | null>(null);
   const [invoice, setInvoice] = useState<InvoiceState>(() => buildNewInvoice(null));
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
@@ -64,6 +75,9 @@ export default function App() {
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [activeModule, setActiveModule] = useState<Module>('editor');
   const [isAiParserOpen, setIsAiParserOpen] = useState<boolean>(false);
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
+  const [dataVersion, setDataVersion] = useState(0);
+  const [invoiceListStatus, setInvoiceListStatus] = useState('');
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
@@ -294,58 +308,101 @@ export default function App() {
     }));
   };
 
-  const navItems: Array<[View, string]> = [
-    ['workspace', 'Workspace'],
-    ['dashboard', 'Dashboard'],
-    ['invoices', 'Invoices'],
-    ['buyers', 'Buyers'],
-    ['company', 'Company'],
-    ...(isAdmin ? ([['team', 'Team']] as Array<[View, string]>) : []),
-    ['account', 'Account'],
+  const navGroups: Array<{ label: string; items: Array<[View, string, React.ReactNode]> }> = [
+    {
+      label: 'Track',
+      items: [
+        ['dashboard', 'Dashboard', <LayoutDashboard className="w-4 h-4" />],
+        ['invoices', 'Invoices', <ScrollText className="w-4 h-4" />],
+        ['reminders', 'Collections', <Bell className="w-4 h-4" />],
+      ],
+    },
+    {
+      label: 'Work',
+      items: [
+        ['workspace', 'Invoice editor', <FileSpreadsheet className="w-4 h-4" />],
+        ['buyers', 'Buyers', <Contact className="w-4 h-4" />],
+      ],
+    },
+    {
+      label: 'Company',
+      items: [
+        ['company', 'Company', <Building2 className="w-4 h-4" />],
+        ...(isAdmin ? ([['team', 'Team', <Users className="w-4 h-4" />]] as Array<[View, string, React.ReactNode]>) : []),
+        ['account', 'Account', <CircleUser className="w-4 h-4" />],
+      ],
+    },
   ];
+  const currentNav = navGroups.flatMap((group) => group.items).find(([key]) => key === view);
 
   const moduleTabs: Array<[Module, string, React.ReactNode]> = [
-    ['editor', 'Data Input', <FileSpreadsheet className="w-3.5 h-3.5 text-blue-600" />],
-    ['payments', 'Payments', <Wallet className="w-3.5 h-3.5 text-amber-600" />],
-    ['erp', 'Tally / SAP', <Layers className="w-3.5 h-3.5 text-indigo-600" />],
-    ['email', 'SMTP Dispatch', <Send className="w-3.5 h-3.5 text-emerald-600" />],
+    ['editor', 'Details', <FileSpreadsheet className="w-3.5 h-3.5" />],
+    ['payments', 'Payments', <Wallet className="w-3.5 h-3.5" />],
+    ['erp', 'Accounts export', <Layers className="w-3.5 h-3.5" />],
+    ['email', 'Email', <Send className="w-3.5 h-3.5" />],
   ];
 
   const canCancel = status === 'draft' ? Boolean(invoiceId) : status !== 'cancelled' && isAdmin;
 
-  return (
-    <div className="flex flex-col h-screen w-screen bg-slate-100 text-slate-800 font-sans overflow-hidden">
-      <header className="flex items-center justify-between gap-6 px-6 py-3 bg-white border-b border-slate-200 shrink-0 z-20">
-        <div className="flex items-center gap-2.5 whitespace-nowrap shrink-0">
-          <div className="w-8 h-8 rounded-lg bg-slate-950 flex items-center justify-center text-white shadow-xs">
-            <Gem className="w-4 h-4 text-sky-400" />
-          </div>
-          <div className="leading-tight">
-            <span className="block text-base font-bold tracking-tight text-slate-950 font-sans">DiamondX-A1005</span>
-            <span className="block text-[11px] text-slate-500 max-w-[180px] truncate">{user.organizationName}</span>
-          </div>
-        </div>
+  const navButton = (key: View, label: string, icon: React.ReactNode, compact = false) => (
+    <button
+      key={key}
+      onClick={() => {
+        if (key === 'invoices') setInvoiceListStatus('');
+        setView(key);
+      }}
+      className={`flex items-center gap-2 rounded-lg text-left font-medium transition-colors ${
+        compact ? 'px-2.5 py-1.5 text-xs whitespace-nowrap' : 'w-full px-2.5 py-2 text-sm'
+      } ${view === key ? 'bg-white text-stone-950' : 'text-stone-300 hover:bg-white/10 hover:text-white'}`}
+    >
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
 
-        <nav className="hidden md:flex flex-wrap items-center gap-x-4 gap-y-1 min-w-0 text-xs font-semibold text-slate-600">
-          {navItems.map(([key, label]) => (
-            <button
-              key={key}
-              onClick={() => setView(key)}
-              className={`transition-colors whitespace-nowrap shrink-0 ${
-                view === key ? 'text-slate-950 font-bold border-b-2 border-slate-900 pb-0.5' : 'hover:text-slate-900'
-              }`}
-            >
-              {label}
-            </button>
+  return (
+    <div className="flex h-screen w-screen bg-slate-100 text-stone-800 font-sans overflow-hidden">
+      <aside className="hidden md:flex w-60 shrink-0 flex-col bg-stone-950 text-stone-200">
+        <div className="px-4 pt-5 pb-4 border-b border-white/10">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
+              <Gem className="w-4 h-4 text-amber-200" />
+            </div>
+            <div className="leading-tight">
+              <span className="block text-sm font-semibold tracking-tight text-white">{PRODUCT_NAME}</span>
+              <span className="block text-[11px] text-stone-400">{PRODUCT_TAGLINE}</span>
+            </div>
+          </div>
+          <p className="mt-4 text-xs font-medium text-stone-300 truncate" title={user.organizationName || COMPANY_NAME}>
+            {user.organizationName || COMPANY_NAME}
+          </p>
+        </div>
+        <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+          {navGroups.map((group) => (
+            <div key={group.label}>
+              <p className="px-2.5 mb-1 text-[10px] font-semibold uppercase tracking-wider text-stone-500">{group.label}</p>
+              <div className="space-y-0.5">
+                {group.items.map(([key, label, icon]) => navButton(key, label, icon))}
+              </div>
+            </div>
           ))}
         </nav>
+      </aside>
 
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+      <header className="flex items-center justify-between gap-4 px-4 md:px-6 py-3 bg-white border-b border-stone-200 shrink-0 z-20">
+        <p className="md:hidden text-sm font-semibold text-stone-950">{PRODUCT_NAME}</p>
+        <p className="hidden md:block text-xs text-stone-500">{currentNav?.[1]}</p>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="hidden xl:inline text-xs text-slate-500 max-w-[180px] truncate">{user.email}</span>
+          <span className="hidden xl:inline text-xs text-stone-500 max-w-[180px] truncate">{user.email}</span>
           <button
-            onClick={handleLogout}
-            className="px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-950"
+            onClick={() => setIsAssistantOpen(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-stone-800 bg-stone-100 hover:bg-stone-200 rounded-lg"
           >
+            <Bot className="w-3.5 h-3.5" />
+            Assistant
+          </button>
+          <button onClick={handleLogout} className="px-2.5 py-1.5 text-xs font-semibold text-stone-600 hover:text-stone-950">
             Log out
           </button>
           {view === 'workspace' && (
@@ -353,33 +410,55 @@ export default function App() {
               <button
                 onClick={() => setIsAiParserOpen(true)}
                 disabled={locked}
-                className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800 disabled:opacity-40"
+                className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-stone-700 hover:text-stone-950 disabled:opacity-40"
               >
                 <Sparkles className="w-3.5 h-3.5" />
-                AI Parser
+                Read a manifest
               </button>
               <button
                 onClick={handleSaveInvoice}
                 disabled={isSaving || locked}
-                className="px-3 py-1.5 text-xs font-semibold text-slate-900 bg-white border border-slate-300 hover:bg-slate-50 rounded-lg disabled:opacity-50"
+                className="px-3 py-1.5 text-xs font-semibold text-stone-900 bg-white border border-stone-300 hover:bg-stone-50 rounded-lg disabled:opacity-50"
               >
                 {isSaving ? 'Saving...' : 'Save'}
               </button>
               <button
                 onClick={handleTopDownload}
                 disabled={isDownloading}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg transition-colors whitespace-nowrap shrink-0 shadow-xs disabled:opacity-50"
+                className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-stone-900 hover:bg-stone-800 rounded-lg disabled:opacity-50"
               >
-                <Download className="w-3.5 h-3.5 text-sky-400" />
-                <span>{isDownloading ? 'Generating...' : 'Export A4 PDF'}</span>
+                <Download className="w-3.5 h-3.5" />
+                <span>{isDownloading ? 'Preparing...' : 'Download PDF'}</span>
               </button>
             </>
           )}
         </div>
       </header>
+      <nav className="md:hidden flex gap-1 overflow-x-auto px-3 py-2 bg-stone-950">
+        {navGroups.flatMap((group) => group.items).map(([key, label, icon]) => navButton(key, label, icon, true))}
+      </nav>
 
-      {view === 'dashboard' && <DashboardPage onOpen={handleOpenInvoice} />}
-      {view === 'invoices' && <InvoicesPage isAdmin={isAdmin} onOpen={handleOpenInvoice} onNew={handleNewInvoice} />}
+      {view === 'dashboard' && (
+        <DashboardPage
+          key={dataVersion}
+          onOpen={handleOpenInvoice}
+          onFollowUp={() => setView('reminders')}
+          onBrowse={(status) => {
+            setInvoiceListStatus(status);
+            setView('invoices');
+          }}
+        />
+      )}
+      {view === 'invoices' && (
+        <InvoicesPage
+          key={`${dataVersion}-${invoiceListStatus}`}
+          isAdmin={isAdmin}
+          initialStatus={invoiceListStatus}
+          onOpen={handleOpenInvoice}
+          onNew={handleNewInvoice}
+        />
+      )}
+      {view === 'reminders' && <RemindersPage key={dataVersion} />}
       {view === 'buyers' && <BuyersPage />}
       {view === 'company' && (
         <CompanyPage
@@ -395,32 +474,21 @@ export default function App() {
 
       {view === 'workspace' && (
         <>
-          <div className="bg-slate-900 text-white px-6 py-1.5 flex flex-wrap items-center justify-between text-[11px] font-mono border-b border-slate-800 shrink-0">
-            <div className="flex items-center gap-4">
-              <span className="flex items-center gap-1 text-emerald-400 font-semibold">
+          <div className="bg-white text-stone-600 px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-[11px] border-b border-stone-200 shrink-0">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span className="flex items-center gap-1 font-semibold text-emerald-800">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                KPCS Conflict-Free Guaranteed
+                Kimberley Process
               </span>
-              <span className="text-slate-400">|</span>
-              <span className="text-slate-300">
-                GJEPC RCMC: <strong className="text-white font-bold">{invoice.exporter.rcmcNo}</strong>
-              </span>
-              <span className="text-slate-400">|</span>
-              <span className="text-slate-300">
-                LUT ARN: <strong className="text-white font-bold">{invoice.shipment.lutNumber}</strong>
-              </span>
-              <span className="text-slate-400">|</span>
-              <span className="text-slate-300">
-                Bank AD Code: <strong className="text-sky-300 font-bold">{invoice.bank.adCode}</strong>
-              </span>
+              <span>RCMC {invoice.exporter.rcmcNo || '—'}</span>
+              <span>LUT {invoice.shipment.lutNumber || '—'}</span>
+              <span>AD code {invoice.bank.adCode || '—'}</span>
             </div>
 
-            <div className="flex items-center gap-3">
-              <span className="text-slate-300">
-                Port: <strong className="text-white">{invoice.shipment.portOfLoading.split('(')[0].trim()}</strong>
-              </span>
-              <span className="text-slate-400">→</span>
-              <span className="text-emerald-400 font-bold">{invoice.shipment.portOfDischarge.split('(')[0].trim()}</span>
+            <div className="flex items-center gap-2 font-medium text-stone-800">
+              <span>{invoice.shipment.portOfLoading.split('(')[0].trim() || 'Loading port'}</span>
+              <span className="text-stone-400">→</span>
+              <span>{invoice.shipment.portOfDischarge.split('(')[0].trim() || 'Discharge port'}</span>
             </div>
           </div>
 
@@ -578,6 +646,26 @@ export default function App() {
           onClose={() => setIsAiParserOpen(false)}
         />
       )}
+
+      {isAssistantOpen && (
+        <AssistantPanel
+          userId={user.id}
+          onClose={() => setIsAssistantOpen(false)}
+          onOpenInvoice={(id) => {
+            setIsAssistantOpen(false);
+            handleOpenInvoice(id);
+          }}
+          onChanged={async () => {
+            setDataVersion((version) => version + 1);
+            if (invoiceId) {
+              const record = await api<InvoiceRecord>(`/api/invoices/${invoiceId}`).catch(() => null);
+              if (record) setStatus(record.status);
+            }
+            await refreshInvoices().catch(() => undefined);
+          }}
+        />
+      )}
+      </div>
     </div>
   );
 }

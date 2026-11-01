@@ -10,6 +10,7 @@ export type InvoiceFacts = {
   buyerName: string;
   destinationCountry: string;
   invoiceDate: string | null;
+  creditDays: number;
   totalUsd: number;
   totalCarats: number;
 };
@@ -25,6 +26,7 @@ export function invoiceFacts(invoice: StoredInvoice): InvoiceFacts {
     buyerName: invoice.consignee.companyName.trim(),
     destinationCountry: invoice.shipment.countryOfDestination.trim() || invoice.consignee.country.trim(),
     invoiceDate: /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : null,
+    creditDays: invoice.shipment.creditDays,
     totalUsd: Math.round(totalUsd * 100) / 100,
     totalCarats: Math.round(totalCarats * 1000) / 1000,
   };

@@ -20,7 +20,7 @@ export const sendPasswordResetEmail: SendPasswordResetEmail = async (to, link) =
   await transporter.sendMail({
     from: SMTP_FROM || SMTP_USER,
     to,
-    subject: 'Reset your DiamondX password',
+    subject: 'Reset your Meridian password',
     text: `Use this link to choose a new password. It expires in 1 hour.\n\n${link}\n\nIf you did not ask for this, ignore this email.`,
   });
 };

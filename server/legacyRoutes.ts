@@ -1,18 +1,16 @@
 import type { Express } from 'express';
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai';
 import { requireUser } from './auth.js';
+import { callModel, usageFrom } from './ai/call.js';
+import { AiUnavailableError, GEMINI_MODEL, gemini } from './ai/client.js';
+import type { DbPool } from './db.js';
+import { currentUser } from './http.js';
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
+const MANIFEST_PROMPT_VERSION = 'manifest-v1';
 
-export function registerLegacyRoutes(app: Express): void {
+export function registerLegacyRoutes(app: Express, pool: DbPool): void {
   app.post('/api/parse-manifest', requireUser, async (req, res) => {
+    const user = currentUser(res);
     try {
       const { manifestText, imageBase64, mimeType } = req.body;
 
@@ -47,10 +45,19 @@ Always extract exact carats (e.g. 1.25, 2.504), pieces, rate per carat in USD, t
           : 'Please analyze this diamond parcel manifest image/document and extract the diamond line items, carats, rates, certificates, and lot numbers.',
       });
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.8-flash',
+      const context = {
+        feature: 'manifest_parser' as const,
+        promptVersion: MANIFEST_PROMPT_VERSION,
+        model: GEMINI_MODEL,
+        organizationId: user.organizationId,
+        userId: user.id,
+      };
+      const response = await callModel(pool, context, async (signal) => {
+        const result = await gemini().models.generateContent({
+        model: GEMINI_MODEL,
         contents: { parts: contents },
         config: {
+          abortSignal: signal,
           systemInstruction: systemPrompt,
           responseMimeType: 'application/json',
           responseSchema: {
@@ -80,11 +87,16 @@ Always extract exact carats (e.g. 1.25, 2.504), pieces, rate per carat in USD, t
             required: ['items'],
           },
         },
+        });
+        return { value: result, usage: usageFrom(result.usageMetadata) };
       });
 
       const parsedData = JSON.parse(response.text || '{}');
       return res.json({ success: true, data: parsedData });
     } catch (error: any) {
+      if (error instanceof AiUnavailableError) {
+        return res.status(503).json({ error: error.message });
+      }
       console.error('Error in /api/parse-manifest:', error);
       return res.status(500).json({
         error: error.message || 'Failed to parse diamond manifest via Gemini API.',

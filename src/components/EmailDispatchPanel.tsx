@@ -2,18 +2,14 @@ import React, { useState } from 'react';
 import { 
   Send, 
   Mail, 
-  Settings, 
   Paperclip, 
-  CheckCircle, 
-  AlertCircle, 
   RefreshCw, 
-  ShieldCheck, 
   FileText, 
-  Server,
   UserCheck
 } from 'lucide-react';
 import { InvoiceState } from '../types/invoice';
 import { exportElementToPdf } from '../utils/pdfGenerator';
+import { DEFAULT_SMTP, SmtpFields, smtpPayload, type SmtpConfig } from './SmtpFields';
 
 interface Props {
   invoice: InvoiceState;
@@ -21,14 +17,8 @@ interface Props {
 
 export const EmailDispatchPanel: React.FC<Props> = ({ invoice }) => {
   // SMTP Config
-  const [smtpPreset, setSmtpPreset] = useState<'custom' | 'gmail' | 'office365'>('gmail');
-  const [smtpHost, setSmtpHost] = useState<string>('smtp.gmail.com');
-  const [smtpPort, setSmtpPort] = useState<number>(465);
-  const [smtpSecure, setSmtpSecure] = useState<boolean>(true);
-  const [smtpUser, setSmtpUser] = useState<string>('customs.dispatch@diamondx-trade.com');
-  const [smtpPass, setSmtpPass] = useState<string>('');
-  const [allowInvalidCertificates, setAllowInvalidCertificates] = useState<boolean>(false);
-  const [fromName, setFromName] = useState<string>(invoice.exporter.companyName);
+  const [smtp, setSmtp] = useState<SmtpConfig>({ ...DEFAULT_SMTP, user: 'customs.dispatch@diamondx-trade.com' });
+  const [fromName] = useState<string>(invoice.exporter.companyName);
 
   // Recipients
   const [buyerEmail, setBuyerEmail] = useState<string>(invoice.consignee.email || 'procurement@rosenfeld-diamonds.be');
@@ -45,53 +35,7 @@ export const EmailDispatchPanel: React.FC<Props> = ({ invoice }) => {
 
   // Status & Logs
   const [isSending, setIsSending] = useState<boolean>(false);
-  const [isVerifying, setIsVerifying] = useState<boolean>(false);
-  const [verifyStatus, setVerifyStatus] = useState<{ success?: boolean; message?: string } | null>(null);
   const [dispatchLogs, setDispatchLogs] = useState<any[]>([]);
-
-  // Update SMTP Preset
-  const handlePresetChange = (preset: 'custom' | 'gmail' | 'office365') => {
-    setSmtpPreset(preset);
-    if (preset === 'gmail') {
-      setSmtpHost('smtp.gmail.com');
-      setSmtpPort(465);
-      setSmtpSecure(true);
-    } else if (preset === 'office365') {
-      setSmtpHost('smtp.office365.com');
-      setSmtpPort(587);
-      setSmtpSecure(false);
-    }
-  };
-
-  // Verify SMTP Connection
-  const handleVerifySmtp = async () => {
-    setIsVerifying(true);
-    setVerifyStatus(null);
-    try {
-      const response = await fetch('/api/verify-smtp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          host: smtpHost,
-          port: smtpPort,
-          secure: smtpSecure,
-          user: smtpUser,
-          pass: smtpPass,
-          allowInvalidCertificates,
-        }),
-      });
-      const data = await response.json();
-      if (response.ok && data.success) {
-        setVerifyStatus({ success: true, message: 'SMTP Handshake Verified (TLS Ready)' });
-      } else {
-        setVerifyStatus({ success: false, message: data.error || 'SMTP Authentication Failed' });
-      }
-    } catch (err: any) {
-      setVerifyStatus({ success: false, message: err.message || 'Network error verifying SMTP' });
-    } finally {
-      setIsVerifying(false);
-    }
-  };
 
   // Generate & Dispatch Email
   const handleSendEmail = async () => {
@@ -202,16 +146,7 @@ export const EmailDispatchPanel: React.FC<Props> = ({ invoice }) => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          smtpConfig: {
-            host: smtpHost,
-            port: smtpPort,
-            secure: smtpSecure,
-            user: smtpUser,
-            pass: smtpPass,
-            fromEmail: smtpUser,
-            fromName: fromName || invoice.exporter.companyName,
-            allowInvalidCertificates,
-          },
+          smtpConfig: smtpPayload(smtp, fromName || invoice.exporter.companyName),
           emailData: {
             recipients,
             cc,
@@ -263,127 +198,7 @@ export const EmailDispatchPanel: React.FC<Props> = ({ invoice }) => {
       {/* Main Form Body */}
       <div className="flex-1 overflow-auto p-4 space-y-4 text-xs">
         {/* SMTP Configuration Card */}
-        <div className="p-3 border border-slate-200 rounded-lg bg-slate-50/50 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-semibold text-slate-900">
-              <Server className="w-4 h-4 text-slate-600" />
-              <span>SMTP Gateway Configuration</span>
-            </div>
-            {/* Presets */}
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => handlePresetChange('gmail')}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  smtpPreset === 'gmail' ? 'bg-blue-600 text-white' : 'bg-white border border-slate-200 text-slate-600'
-                }`}
-              >
-                Gmail
-              </button>
-              <button
-                onClick={() => handlePresetChange('office365')}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  smtpPreset === 'office365' ? 'bg-blue-600 text-white' : 'bg-white border border-slate-200 text-slate-600'
-                }`}
-              >
-                Office 365
-              </button>
-              <button
-                onClick={() => handlePresetChange('custom')}
-                className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                  smtpPreset === 'custom' ? 'bg-blue-600 text-white' : 'bg-white border border-slate-200 text-slate-600'
-                }`}
-              >
-                Custom SMTP
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-            <div className="md:col-span-2">
-              <label className="block text-[11px] font-medium text-slate-600 mb-0.5">SMTP Server Host</label>
-              <input
-                type="text"
-                value={smtpHost}
-                onChange={(e) => setSmtpHost(e.target.value)}
-                className="w-full px-2 py-1 border border-slate-300 rounded font-mono bg-white"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-slate-600 mb-0.5">Port & SSL</label>
-              <div className="flex gap-2 items-center">
-                <input
-                  type="number"
-                  value={smtpPort}
-                  onChange={(e) => setSmtpPort(parseInt(e.target.value) || 587)}
-                  className="w-16 px-2 py-1 border border-slate-300 rounded font-mono bg-white"
-                />
-                <label className="flex items-center gap-1 text-[11px] text-slate-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={smtpSecure}
-                    onChange={(e) => setSmtpSecure(e.target.checked)}
-                    className="rounded text-blue-600"
-                  />
-                  <span>SSL/TLS</span>
-                </label>
-              </div>
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-slate-600 mb-0.5">Action</label>
-              <button
-                onClick={handleVerifySmtp}
-                disabled={isVerifying}
-                className="w-full px-2 py-1 text-xs font-medium border border-slate-300 rounded bg-white hover:bg-slate-100 text-slate-700 transition-colors flex items-center justify-center gap-1"
-              >
-                {isVerifying ? <RefreshCw className="w-3 h-3 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-blue-600" />}
-                <span>Test Gateway</span>
-              </button>
-            </div>
-          </div>
-          <label className="flex items-start gap-1.5 text-[11px] text-slate-600 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={allowInvalidCertificates}
-              onChange={(e) => setAllowInvalidCertificates(e.target.checked)}
-              className="mt-0.5 rounded text-blue-600"
-            />
-            <span>
-              Allow a self-signed or invalid TLS certificate. Only use this for a mail server you control: it lets a
-              network attacker read your SMTP password.
-            </span>
-          </label>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            <div>
-              <label className="block text-[11px] font-medium text-slate-600 mb-0.5">Username / Sender Email</label>
-              <input
-                type="text"
-                value={smtpUser}
-                onChange={(e) => setSmtpUser(e.target.value)}
-                className="w-full px-2 py-1 border border-slate-300 rounded font-mono bg-white"
-              />
-            </div>
-            <div>
-              <label className="block text-[11px] font-medium text-slate-600 mb-0.5">App Password / Auth Token</label>
-              <input
-                type="password"
-                placeholder="••••••••••••••••"
-                value={smtpPass}
-                onChange={(e) => setSmtpPass(e.target.value)}
-                className="w-full px-2 py-1 border border-slate-300 rounded font-mono bg-white"
-              />
-            </div>
-          </div>
-
-          {verifyStatus && (
-            <div className={`p-2 rounded text-[11px] flex items-center gap-1.5 ${
-              verifyStatus.success ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'
-            }`}>
-              {verifyStatus.success ? <CheckCircle className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
-              <span>{verifyStatus.message}</span>
-            </div>
-          )}
-        </div>
+        <SmtpFields value={smtp} onChange={setSmtp} />
 
         {/* Smart Recipients Management */}
         <div className="p-3 border border-slate-200 rounded-lg bg-white space-y-3">

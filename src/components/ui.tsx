@@ -15,12 +15,12 @@ export const Page: React.FC<{
   actions?: React.ReactNode;
   children: React.ReactNode;
 }> = ({ title, description, actions, children }) => (
-  <div className="flex-1 overflow-y-auto">
-    <div className="max-w-6xl mx-auto px-6 py-6 space-y-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+  <div className="flex-1 overflow-y-auto bg-slate-100">
+    <div className="max-w-6xl mx-auto px-6 py-7 space-y-5">
+      <div className="flex flex-wrap items-end justify-between gap-3 border-b border-stone-200 pb-4">
         <div>
-          <h1 className="text-lg font-bold text-slate-950">{title}</h1>
-          {description && <p className="text-sm text-slate-600 mt-0.5">{description}</p>}
+          <h1 className="text-2xl font-semibold tracking-tight text-stone-950">{title}</h1>
+          {description && <p className="text-sm text-stone-600 mt-1 max-w-2xl leading-relaxed">{description}</p>}
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
       </div>
@@ -34,7 +34,7 @@ export const Card: React.FC<{ title?: string; children: React.ReactNode; classNa
   children,
   className = '',
 }) => (
-  <section className={`bg-white border border-slate-200 rounded-xl shadow-xs p-4 ${className}`}>
+  <section className={`bg-white border border-stone-200 rounded-xl p-4 ${className}`}>
     {title && <h2 className="text-sm font-semibold text-slate-900 mb-3">{title}</h2>}
     {children}
   </section>

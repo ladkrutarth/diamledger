@@ -95,7 +95,7 @@ async function numberTaken(client: PoolClient, organizationId: string, invoiceNu
   return Boolean(result.rowCount);
 }
 
-async function nextInvoiceNumber(client: PoolClient, organizationId: string): Promise<string> {
+export async function nextInvoiceNumber(client: PoolClient, organizationId: string): Promise<string> {
   const profile = await client.query<{ profile: { invoicePrefix?: string } | null }>(
     'SELECT profile FROM organizations WHERE id = $1',
     [organizationId],
@@ -198,11 +198,11 @@ export function registerInvoiceRoutes(app: Express, pool: DbPool): void {
       const facts = invoiceFacts(invoice);
       const inserted = await client.query<{ id: string }>(
         `INSERT INTO invoices (user_id, organization_id, invoice_number, data, status, buyer_name,
-                               destination_country, invoice_date, total_usd, total_carats)
-         VALUES ($1, $2, $3, $4::jsonb, 'draft', $5, $6, $7, $8, $9)
+                               destination_country, invoice_date, total_usd, total_carats, credit_days)
+         VALUES ($1, $2, $3, $4::jsonb, 'draft', $5, $6, $7, $8, $9, $10)
          RETURNING id`,
         [user.id, user.organizationId, facts.invoiceNumber, JSON.stringify(invoice), facts.buyerName,
-          facts.destinationCountry, facts.invoiceDate, facts.totalUsd, facts.totalCarats],
+          facts.destinationCountry, facts.invoiceDate, facts.totalUsd, facts.totalCarats, facts.creditDays],
       );
       await client.query('COMMIT');
       const row = await loadInvoice(pool, inserted.rows[0].id, user.organizationId);
@@ -250,10 +250,10 @@ export function registerInvoiceRoutes(app: Express, pool: DbPool): void {
       await client.query(
         `UPDATE invoices
          SET invoice_number = $3, data = $4::jsonb, buyer_name = $5, destination_country = $6,
-             invoice_date = $7, total_usd = $8, total_carats = $9, updated_at = now()
+             invoice_date = $7, total_usd = $8, total_carats = $9, credit_days = $10, updated_at = now()
          WHERE id = $1 AND organization_id = $2 AND status = 'draft'`,
         [existing.id, user.organizationId, facts.invoiceNumber, JSON.stringify(invoice), facts.buyerName,
-          facts.destinationCountry, facts.invoiceDate, facts.totalUsd, facts.totalCarats],
+          facts.destinationCountry, facts.invoiceDate, facts.totalUsd, facts.totalCarats, facts.creditDays],
       );
       await client.query('COMMIT');
     } catch (error) {

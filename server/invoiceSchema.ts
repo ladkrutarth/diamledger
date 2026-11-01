@@ -58,6 +58,7 @@ const shipment = z.object({
   incoterms: z.enum(['CIF', 'FOB', 'C&F', 'DAP', 'EXW']),
   incotermLocation: text(200),
   paymentTerms: text(),
+  creditDays: count(365).default(30),
   portOfLoading: text(200),
   portOfDischarge: text(200),
   countryOfOrigin: text(100),

@@ -601,6 +601,23 @@ export const DataEntryPanel: React.FC<Props> = ({ invoice, onChange, onOpenAiPar
                 />
               </div>
               <div>
+                <label className="block text-[11px] font-medium text-slate-600 mb-0.5">Credit Days</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={365}
+                  value={invoice.shipment.creditDays ?? 30}
+                  onChange={(e) =>
+                    onChange({
+                      ...invoice,
+                      shipment: { ...invoice.shipment, creditDays: Math.min(365, Math.max(0, Math.round(Number(e.target.value) || 0))) },
+                    })
+                  }
+                  className="w-full px-2 py-1 border border-slate-300 rounded font-mono"
+                />
+                <p className="mt-0.5 text-[10px] text-slate-500">Payment is overdue this many days after the invoice date.</p>
+              </div>
+              <div>
                 <label className="block text-[11px] font-medium text-slate-600 mb-0.5">Incoterms (2020)</label>
                 <select
                   value={invoice.shipment.incoterms}

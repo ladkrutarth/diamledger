@@ -2,6 +2,8 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import type { DbPool } from './db.js';
+import { geminiAssistantModel, type AssistantModel } from './assistant/agent.js';
+import { registerAssistantRoutes } from './assistant/routes.js';
 import { loadUser, registerAuthRoutes } from './auth.js';
 import { registerCompanyRoutes } from './company.js';
 import { registerDashboardRoutes } from './dashboard.js';
@@ -13,6 +15,7 @@ import { registerLegacyRoutes } from './legacyRoutes.js';
 import { sendPasswordResetEmail, type SendPasswordResetEmail } from './mailer.js';
 import { registerPaymentRoutes } from './payments.js';
 import { registerRateLimits } from './rateLimit.js';
+import { geminiReminderText, registerReminderRoutes, type DraftReminderText } from './reminders.js';
 import { jsonBodyParser, securityHeaders } from './security.js';
 import { registerTeamRoutes } from './team.js';
 import './types.js';
@@ -20,6 +23,8 @@ import './types.js';
 export type AppOptions = {
   sendPasswordResetEmail?: SendPasswordResetEmail;
   createMailTransport?: CreateMailTransport;
+  draftReminderText?: DraftReminderText;
+  assistantModel?: AssistantModel;
 };
 
 const PgSession = connectPgSimple(session);
@@ -73,8 +78,20 @@ export function createApp(pool: DbPool, options: AppOptions = {}): Express {
   registerCompanyRoutes(app, pool);
   registerDashboardRoutes(app, pool);
   registerTeamRoutes(app, pool);
-  registerLegacyRoutes(app);
+  registerLegacyRoutes(app, pool);
   registerEmailRoutes(app, pool, options.createMailTransport ?? createSmtpTransport);
+  registerReminderRoutes(
+    app,
+    pool,
+    options.draftReminderText ?? geminiReminderText,
+    options.createMailTransport ?? createSmtpTransport,
+  );
+  registerAssistantRoutes(
+    app,
+    pool,
+    options.assistantModel ?? geminiAssistantModel,
+    options.draftReminderText ?? geminiReminderText,
+  );
 
   app.use('/api', (req, res) => {
     res.status(404).json({ error: `No API route for ${req.method} ${req.originalUrl || req.url}` });

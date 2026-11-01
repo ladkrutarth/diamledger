@@ -7,8 +7,11 @@ import EmbeddedPostgres from 'embedded-postgres';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from './app.js';
 import { loadMigrations, runMigrations, type DbPool } from './db.js';
-import { DEMO_EMAIL, DEMO_PASSWORD, seedDemoUser } from './seed.js';
+import { DEMO_EMAIL, DEMO_PASSWORD, DEMO_TEAM, seedDemoUser } from './seed.js';
+import { DEMO_INVOICE_TARGET, seedDemoData } from './demoData.js';
+import { invoiceFacts, validateInvoice } from './invoiceValidation.js';
 import { createSmtpTransport, type SmtpSettings } from './emailDispatch.js';
+import type { DraftReminderText, ReminderPromptFacts } from './reminders.js';
 import { MUMBAI_TO_NY_PRESET, SURAT_TO_ANTWERP_PRESET, SURAT_TO_DUBAI_PRESET } from '../src/data/sampleInvoices.js';
 import type { InvoiceState } from '../src/types/invoice.js';
 
@@ -56,6 +59,11 @@ const pricedInvoice = invoiceWith(SURAT_TO_ANTWERP_PRESET, {
 
 const sentResetEmails: Array<{ to: string; link: string }> = [];
 const smtpCalls: Array<{ settings: SmtpSettings; message?: Record<string, any> }> = [];
+
+const reminderPrompts: ReminderPromptFacts[] = [];
+let reminderDrafter: DraftReminderText = async () => {
+  throw new Error('No drafter configured for this test.');
+};
 
 const smtpConfig = { host: 'smtp.example.com', port: 587, secure: false, user: 'desk@example.com', pass: 'secret' };
 
@@ -107,6 +115,10 @@ describe('auth and invoices', () => {
           return { messageId: '<test@mail>', accepted: [] };
         },
       }),
+      draftReminderText: (facts) => {
+        reminderPrompts.push(facts);
+        return reminderDrafter(facts);
+      },
     });
   }, 60000);
 
@@ -125,7 +137,26 @@ describe('auth and invoices', () => {
     );
     sentResetEmails.length = 0;
     smtpCalls.length = 0;
+    reminderPrompts.length = 0;
+    reminderDrafter = async () => {
+      throw new Error('No drafter configured for this test.');
+    };
   });
+
+  async function daysAgo(days: number): Promise<string> {
+    const result = await pool.query<{ day: string }>("SELECT to_char(current_date - $1::int, 'YYYY-MM-DD') AS day", [days]);
+    return result.rows[0].day;
+  }
+
+  async function issuedInvoice(agent: ReturnType<typeof request.agent>, invoiceDate: string, creditDays: number) {
+    const created = await agent.post('/api/invoices').send({
+      invoice: invoiceWith(pricedInvoice, { shipment: { invoiceDate, creditDays } }),
+    });
+    expect(created.status).toBe(201);
+    const issued = await agent.patch(`/api/invoices/${created.body.id}/status`).send({ status: 'issued' });
+    expect(issued.status).toBe(200);
+    return created.body as { id: string; invoiceNumber: string };
+  }
 
   async function signUp(email: string, companyName?: string) {
     const agent = request.agent(app);
@@ -185,6 +216,46 @@ describe('auth and invoices', () => {
     } finally {
       process.env.NODE_ENV = originalEnv;
     }
+  });
+
+  it('seeds demo data once, with overdue invoices that pass validation', async () => {
+    await seedDemoUser(pool);
+    await seedDemoUser(pool);
+    const org = await pool.query<{ organization_id: string }>('SELECT organization_id FROM users WHERE email = $1', [DEMO_EMAIL]);
+    const organizationId = org.rows[0].organization_id;
+    expect((await seedDemoData(pool, organizationId)).invoices).toBe(0);
+
+    const invoices = await pool.query<{ data: unknown; status: string; invoice_number: string; total_usd: string }>(
+      'SELECT data, status, invoice_number, total_usd FROM invoices WHERE organization_id = $1',
+      [organizationId],
+    );
+    expect(invoices.rowCount).toBe(DEMO_INVOICE_TARGET);
+    expect(new Set(invoices.rows.map((row) => row.status))).toEqual(new Set(['draft', 'issued', 'paid', 'cancelled']));
+    for (const row of invoices.rows) {
+      const validation = validateInvoice(row.data);
+      expect(validation.ok).toBe(true);
+      if (validation.ok) expect(invoiceFacts(validation.invoice).totalUsd).toBe(Number(row.total_usd));
+      expect(row.invoice_number).toMatch(/^XYZ\//);
+    }
+    const buyers = await pool.query<{ email: string }>("SELECT data->>'email' AS email FROM buyers WHERE organization_id = $1", [
+      organizationId,
+    ]);
+    expect(buyers.rowCount).toBe(6);
+    expect(buyers.rows.every((row) => row.email.endsWith('@example.com'))).toBe(true);
+    const team = await pool.query<{ email: string; role: string }>(
+      'SELECT email, role FROM users WHERE organization_id = $1 ORDER BY email',
+      [organizationId],
+    );
+    expect(team.rows.filter((row) => row.role === 'admin')).toHaveLength(3);
+    expect(team.rows.filter((row) => row.role === 'member')).toHaveLength(20);
+    expect(team.rows.map((row) => row.email).sort()).toEqual(DEMO_TEAM.map((person) => person.email).sort());
+
+    const agent = request.agent(app);
+    expect((await agent.post('/api/auth/login').send({ email: DEMO_EMAIL, password: DEMO_PASSWORD })).status).toBe(200);
+    const overdue = await agent.get('/api/reminders/overdue');
+    expect(overdue.body.invoices.length).toBeGreaterThan(0);
+    expect(overdue.body.invoices.some((invoice: { recentlyReminded: boolean }) => invoice.recentlyReminded)).toBe(true);
+    expect(overdue.body.invoices.some((invoice: { paidUsd: number }) => invoice.paidUsd > 0)).toBe(true);
   });
 
   it('registers, reads the session, and logs out', async () => {
@@ -571,5 +642,179 @@ describe('auth and invoices', () => {
       .post('/api/auth/login')
       .send({ email: 'owner@example.com', password: 'brand-new-pass' });
     expect(login.status).toBe(200);
+  });
+
+  it('defaults credit days to 30 for invoices saved before the field existed', async () => {
+    const owner = await signUp('owner@example.com');
+    const { creditDays: _omitted, ...oldShipment } = pricedInvoice.shipment;
+    const saved = await owner.post('/api/invoices').send({ invoice: { ...pricedInvoice, shipment: oldShipment } });
+    expect(saved.status).toBe(201);
+    expect(saved.body.invoice.shipment.creditDays).toBe(30);
+    const row = await pool.query('SELECT credit_days FROM invoices WHERE id = $1', [saved.body.id]);
+    expect(row.rows[0].credit_days).toBe(30);
+
+    const rejected = await owner.post('/api/invoices').send({
+      invoice: invoiceWith(pricedInvoice, { shipment: { creditDays: 400 } }),
+    });
+    expect(rejected.status).toBe(400);
+  });
+
+  it('lists only issued invoices past their credit days with a balance due, per company', async () => {
+    const owner = await signUp('owner@example.com');
+    const other = await signUp('other@example.com');
+    const longAgo = await daysAgo(45);
+
+    const overdue = await issuedInvoice(owner, longAgo, 30);
+    await issuedInvoice(owner, await daysAgo(10), 30);
+    await issuedInvoice(owner, longAgo, 45);
+
+    await owner.post('/api/invoices').send({ invoice: invoiceWith(pricedInvoice, { shipment: { invoiceDate: longAgo, creditDays: 0 } }) });
+
+    const paid = await issuedInvoice(owner, longAgo, 0);
+    await owner.post(`/api/invoices/${paid.id}/payments`).send({ amountUsd: 1050, paidOn: await daysAgo(1) });
+
+    const cancelled = await issuedInvoice(owner, longAgo, 0);
+    await owner.patch(`/api/invoices/${cancelled.id}/status`).send({ status: 'cancelled' });
+
+    const otherCompany = await issuedInvoice(other, longAgo, 0);
+
+    const listed = await owner.get('/api/reminders/overdue');
+    expect(listed.status).toBe(200);
+    expect(listed.body.invoices).toEqual([
+      expect.objectContaining({
+        id: overdue.id,
+        invoiceNumber: overdue.invoiceNumber,
+        buyerEmail: 'procurement@rosenfeld-diamonds.be',
+        invoiceDate: longAgo,
+        dueDate: await daysAgo(15),
+        daysOverdue: 15,
+        dueUsd: 1050,
+        remindersSent: 0,
+        recentlyReminded: false,
+      }),
+    ]);
+    expect((await other.get('/api/reminders/overdue')).body.invoices.map((row: any) => row.id)).toEqual([otherCompany.id]);
+    expect((await other.post('/api/reminders/draft').send({ invoiceId: overdue.id })).status).toBe(404);
+
+    const dashboard = await owner.get('/api/dashboard');
+    const flags = Object.fromEntries(dashboard.body.unpaid.invoices.map((row: any) => [row.id, row.overdue]));
+    expect(flags[overdue.id]).toBe(true);
+    expect(Object.values(flags).filter(Boolean)).toHaveLength(1);
+  });
+
+  it('drafts reminder wording with the model but takes every figure from the database', async () => {
+    const owner = await signUp('owner@example.com');
+    const invoice = await issuedInvoice(owner, await daysAgo(40), 30);
+    await owner.post(`/api/invoices/${invoice.id}/payments`).send({ amountUsd: 50, paidOn: await daysAgo(5) });
+
+    reminderDrafter = async () => ({
+      subject: 'Friendly payment reminder',
+      greeting: 'Dear Mr. Rosenfeld,',
+      paragraphs: ['Please settle the outstanding balance <b>soon</b>.'],
+    });
+    const drafted = await owner.post('/api/reminders/draft').send({ invoiceId: invoice.id });
+    expect(drafted.status).toBe(201);
+    expect(drafted.body).toMatchObject({
+      source: 'model',
+      tone: 'gentle',
+      fullSubject: `Friendly payment reminder - Invoice ${invoice.invoiceNumber}`,
+      recipients: ['procurement@rosenfeld-diamonds.be'],
+      figures: { dueUsd: 1000, paidUsd: 50, totalUsd: 1050, daysOverdue: 10 },
+    });
+    expect(drafted.body.html).toContain('$1,000.00');
+    expect(drafted.body.html).toContain('STATE BANK OF INDIA');
+    expect(drafted.body.html).toContain('&lt;b&gt;soon&lt;/b&gt;');
+    expect(reminderPrompts).toEqual([
+      { buyerName: 'Antwerp Gems BVBA', contactPerson: 'Marc Rosenfeld', exporterName: 'xyz LLC', tone: 'gentle' },
+    ]);
+
+    reminderDrafter = async () => ({
+      subject: 'Payment reminder',
+      greeting: 'Dear Mr. Rosenfeld,',
+      paragraphs: ['Please pay USD 9,999 today.'],
+    });
+    const invented = await owner.post('/api/reminders/draft').send({ invoiceId: invoice.id });
+    expect(invented.body.source).toBe('template');
+    expect(invented.body.html).not.toContain('9,999');
+    expect(invented.body.html).toContain('$1,000.00');
+
+    const originalWarn = console.warn;
+    console.warn = () => undefined;
+    try {
+      reminderDrafter = async () => {
+        throw new Error('Gemini is down');
+      };
+      const fallback = await owner.post('/api/reminders/draft').send({ invoiceId: invoice.id });
+      expect(fallback.status).toBe(201);
+      expect(fallback.body.source).toBe('template');
+      expect(fallback.body.greeting).toBe('Dear Marc Rosenfeld,');
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    const rows = await pool.query('SELECT model, prompt_version, status FROM payment_reminders ORDER BY created_at');
+    expect(rows.rows.map((row) => row.model)).toEqual(['gemini-3.8-flash', 'template', 'template']);
+    expect(rows.rows.every((row) => row.status === 'draft' && row.prompt_version === 'reminder-v1')).toBe(true);
+  });
+
+  it('sends an approved reminder once, logs it, and refuses once the invoice is paid', async () => {
+    const owner = await signUp('owner@example.com');
+    const invoice = await issuedInvoice(owner, await daysAgo(40), 30);
+    reminderDrafter = async () => ({
+      subject: 'Payment reminder',
+      greeting: 'Dear Mr. Rosenfeld,',
+      paragraphs: ['The balance below is now past due.'],
+    });
+
+    const draft = await owner.post('/api/reminders/draft').send({ invoiceId: invoice.id });
+    const sendBody = {
+      subject: 'Edited reminder',
+      greeting: 'Dear Marc,',
+      paragraphs: ['Could you confirm the payment date?', ''],
+      recipients: ['buyer@example.com'],
+      smtpConfig,
+    };
+
+    expect((await owner.post(`/api/reminders/${draft.body.id}/send`).send({ ...sendBody, recipients: [] })).status).toBe(400);
+    expect(smtpCalls).toHaveLength(0);
+
+    const sent = await owner.post(`/api/reminders/${draft.body.id}/send`).send(sendBody);
+    expect(sent.status).toBe(200);
+    expect(sent.body).toMatchObject({ status: 'sent', mode: 'live_smtp' });
+    expect(smtpCalls).toHaveLength(1);
+    expect(smtpCalls[0].message).toMatchObject({
+      to: ['buyer@example.com'],
+      subject: `Edited reminder - Invoice ${invoice.invoiceNumber}`,
+    });
+    expect(smtpCalls[0].message?.html).toContain('Could you confirm the payment date?');
+    expect(smtpCalls[0].message?.html).toContain('$1,050.00');
+
+    const logged = await pool.query('SELECT invoice_number, mode FROM email_dispatches');
+    expect(logged.rows).toEqual([{ invoice_number: invoice.invoiceNumber, mode: 'live_smtp' }]);
+    const stored = await pool.query('SELECT status, message_id, sent_at FROM payment_reminders WHERE id = $1', [draft.body.id]);
+    expect(stored.rows[0]).toMatchObject({ status: 'sent', message_id: '<test@mail>' });
+    expect(stored.rows[0].sent_at).not.toBeNull();
+
+    expect((await owner.post(`/api/reminders/${draft.body.id}/send`).send(sendBody)).status).toBe(409);
+    expect((await owner.post(`/api/reminders/${draft.body.id}/discard`)).status).toBe(409);
+
+    const listed = await owner.get('/api/reminders/overdue');
+    expect(listed.body.invoices[0]).toMatchObject({ remindersSent: 1, recentlyReminded: true });
+
+    const repeat = await owner.post('/api/reminders/draft').send({ invoiceId: invoice.id });
+    expect(repeat.status).toBe(409);
+    expect(repeat.body.recentlyReminded).toBe(true);
+
+    const second = await owner.post('/api/reminders/draft').send({ invoiceId: invoice.id, confirmRepeat: true });
+    expect(second.status).toBe(201);
+    expect(second.body.tone).toBe('firm');
+
+    await owner.post(`/api/invoices/${invoice.id}/payments`).send({ amountUsd: 1050, paidOn: await daysAgo(0) });
+    const afterPayment = await owner.post(`/api/reminders/${second.body.id}/send`).send(sendBody);
+    expect(afterPayment.status).toBe(409);
+    expect(smtpCalls).toHaveLength(1);
+    expect((await owner.get('/api/reminders/overdue')).body.invoices).toEqual([]);
+
+    expect((await owner.post(`/api/reminders/${second.body.id}/discard`)).status).toBe(200);
   });
 });
