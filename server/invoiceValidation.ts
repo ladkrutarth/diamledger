@@ -1,29 +1,63 @@
+import { isRecord } from './http.js';
+
+export { isUuid } from './http.js';
+
 export type StoredInvoice = Record<string, unknown> & {
-  exporter: { companyName?: string };
-  consignee: { companyName?: string };
-  shipment: { invoiceNumber: string };
-  items: unknown[];
+  exporter: Record<string, unknown>;
+  consignee: Record<string, unknown> & { companyName?: string; country?: string };
+  shipment: Record<string, unknown> & { invoiceNumber: string; invoiceDate?: string; countryOfDestination?: string };
+  items: Array<Record<string, unknown>>;
+};
+
+export type InvoiceFacts = {
+  invoiceNumber: string;
+  buyerName: string;
+  destinationCountry: string;
+  invoiceDate: string | null;
+  totalUsd: number;
+  totalCarats: number;
 };
 
 export function parseInvoice(value: unknown): StoredInvoice | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const invoice = value as Record<string, unknown>;
-  const shipment = invoice.shipment;
-  const exporter = invoice.exporter;
-  const consignee = invoice.consignee;
-  if (!shipment || typeof shipment !== 'object' || Array.isArray(shipment)) return null;
-  if (!exporter || typeof exporter !== 'object' || Array.isArray(exporter)) return null;
-  if (!consignee || typeof consignee !== 'object' || Array.isArray(consignee)) return null;
-  if (!Array.isArray(invoice.items)) return null;
+  if (!isRecord(value)) return null;
+  const { shipment, exporter, consignee, items } = value;
+  if (!isRecord(shipment) || !isRecord(exporter) || !isRecord(consignee)) return null;
+  if (!Array.isArray(items) || !items.every(isRecord)) return null;
 
-  const invoiceNumber = (shipment as { invoiceNumber?: unknown }).invoiceNumber;
-  if (typeof invoiceNumber !== 'string' || invoiceNumber.trim().length === 0 || invoiceNumber.length > 200) {
-    return null;
-  }
+  const invoiceNumber = shipment.invoiceNumber ?? '';
+  if (typeof invoiceNumber !== 'string' || invoiceNumber.length > 200) return null;
 
-  return invoice as StoredInvoice;
+  return value as StoredInvoice;
 }
 
-export function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+function toNumber(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function text(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+export function invoiceFacts(invoice: StoredInvoice): InvoiceFacts {
+  const itemsTotal = invoice.items.reduce((sum, item) => sum + toNumber(item.totalAmount), 0);
+  const totalUsd =
+    itemsTotal + toNumber(invoice.freightUsd) + toNumber(invoice.insuranceUsd) + toNumber(invoice.otherChargesUsd);
+  const totalCarats = invoice.items.reduce((sum, item) => sum + toNumber(item.carats), 0);
+  const rawDate = text(invoice.shipment.invoiceDate);
+
+  return {
+    invoiceNumber: text(invoice.shipment.invoiceNumber),
+    buyerName: text(invoice.consignee.companyName),
+    destinationCountry: text(invoice.shipment.countryOfDestination) || text(invoice.consignee.country),
+    invoiceDate: /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : null,
+    totalUsd: Math.round(totalUsd * 100) / 100,
+    totalCarats: Math.round(totalCarats * 1000) / 1000,
+  };
+}
+
+export function financialYear(date: Date): string {
+  const year = date.getFullYear();
+  const startYear = date.getMonth() >= 3 ? year : year - 1;
+  return `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`;
 }

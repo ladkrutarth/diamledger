@@ -1,11 +1,20 @@
-import express, { type Express } from 'express';
+import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
 import type { DbPool } from './db.js';
-import { registerAuthRoutes } from './auth.js';
+import { loadUser, registerAuthRoutes } from './auth.js';
+import { registerCompanyRoutes } from './company.js';
+import { registerDashboardRoutes } from './dashboard.js';
 import { registerInvoiceRoutes } from './invoices.js';
 import { registerLegacyRoutes } from './legacyRoutes.js';
+import { sendPasswordResetEmail, type SendPasswordResetEmail } from './mailer.js';
+import { registerPaymentRoutes } from './payments.js';
+import { registerTeamRoutes } from './team.js';
 import './types.js';
+
+export type AppOptions = {
+  sendPasswordResetEmail?: SendPasswordResetEmail;
+};
 
 const PgSession = connectPgSimple(session);
 
@@ -18,7 +27,7 @@ export function sessionSecret(): string {
   return 'dev-only-session-secret';
 }
 
-export function createApp(pool: DbPool): Express {
+export function createApp(pool: DbPool, options: AppOptions = {}): Express {
   const app = express();
   const onVercel = process.env.VERCEL === '1';
   const store = new PgSession({
@@ -51,12 +60,25 @@ export function createApp(pool: DbPool): Express {
     }),
   );
 
-  registerAuthRoutes(app, pool);
+  app.use(loadUser(pool));
+
+  registerAuthRoutes(app, pool, options.sendPasswordResetEmail ?? sendPasswordResetEmail);
   registerInvoiceRoutes(app, pool);
+  registerPaymentRoutes(app, pool);
+  registerCompanyRoutes(app, pool);
+  registerDashboardRoutes(app, pool);
+  registerTeamRoutes(app, pool);
   registerLegacyRoutes(app);
 
-  app.use((req, res) => {
+  app.use('/api', (req, res) => {
     res.status(404).json({ error: `No API route for ${req.method} ${req.originalUrl || req.url}` });
+  });
+
+  app.use((error: any, _req: Request, res: Response, _next: NextFunction) => {
+    const status = typeof error?.status === 'number' && error.status >= 400 && error.status < 500 ? error.status : 500;
+    if (status === 500) console.error('API error:', error);
+    if (res.headersSent) return;
+    res.status(status).json({ error: status === 500 ? 'Something went wrong. Please try again.' : error.message });
   });
 
   return app;

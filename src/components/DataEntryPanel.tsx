@@ -586,6 +586,7 @@ export const DataEntryPanel: React.FC<Props> = ({ invoice, onChange, onOpenAiPar
                 <input
                   type="text"
                   value={invoice.shipment.invoiceNumber}
+                  placeholder="Assigned automatically on save"
                   onChange={(e) => onChange({ ...invoice, shipment: { ...invoice.shipment, invoiceNumber: e.target.value } })}
                   className="w-full px-2 py-1 border border-slate-300 rounded font-mono font-bold"
                 />

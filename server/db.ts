@@ -31,9 +31,18 @@ function schemaPath(): string {
   return found;
 }
 
+const SCHEMA_LOCK_ID = 74102391;
+
 export async function applySchema(pool: DbPool): Promise<void> {
   const sql = fs.readFileSync(schemaPath(), 'utf8');
-  await pool.query(sql);
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [SCHEMA_LOCK_ID]);
+    await client.query(sql);
+  } finally {
+    await client.query('SELECT pg_advisory_unlock($1)', [SCHEMA_LOCK_ID]).catch(() => undefined);
+    client.release();
+  }
 }
 
 export async function applySchemaWithRetry(pool: DbPool, attempts = 20): Promise<void> {

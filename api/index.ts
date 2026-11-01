@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { handleApi } from '../../server/vercelHandler.js';
+import { handleApi } from '../server/vercelHandler.js';
 
 export default function handler(req: IncomingMessage, res: ServerResponse): void {
-  handleApi(req, res, '/api/auth/logout');
+  handleApi(req, res);
 }

@@ -34,9 +34,18 @@ function getApp(): Promise<Express> {
   return appPromise;
 }
 
-export function handleApi(req: IncomingMessage, res: ServerResponse, pathname: string): void {
-  const search = req.url?.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
-  req.url = `${pathname}${search}`;
+export function apiUrl(rawUrl: string): string {
+  const url = new URL(rawUrl || '/', 'http://localhost');
+  const rewrittenPath = url.searchParams.get('__path');
+  url.searchParams.delete('__path');
+  const pathname =
+    rewrittenPath !== null ? `/api/${rewrittenPath.replace(/^\/+/, '')}` : url.pathname;
+  const search = url.searchParams.toString();
+  return `${pathname}${search ? `?${search}` : ''}`;
+}
+
+export function handleApi(req: IncomingMessage, res: ServerResponse): void {
+  req.url = apiUrl(req.url || '/');
   getApp()
     .then((app) => {
       app(req, res);
