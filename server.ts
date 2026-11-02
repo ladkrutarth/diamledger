@@ -1,12 +1,18 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { createPool, migrateOnStart, runMigrationsWithRetry } from './server/db.js';
 import { createApp } from './server/app.js';
 import { flushMonitoring, initMonitoring, reportError } from './server/monitoring.js';
 import { seedDemoUser } from './server/seed.js';
 
+// Load .env from next to this file, so it works wherever the server is started from.
+dotenv.config({ path: path.resolve(path.dirname(fileURLToPath(import.meta.url)), '.env') });
 dotenv.config();
+console.log(
+  `AI provider: ${process.env.AI_PROVIDER || 'gemini'}; GEMINI_API_KEY ${process.env.GEMINI_API_KEY ? 'loaded' : 'MISSING'}; HF_TOKEN ${process.env.HF_TOKEN ? 'loaded' : 'missing'}`,
+);
 
 const port = process.env.PORT || 3000;
 const isProd = process.env.NODE_ENV === 'production';
