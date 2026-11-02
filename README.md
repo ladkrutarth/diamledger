@@ -98,6 +98,17 @@ sequenceDiagram
 
 Nothing changes in the books until the user confirms, and confirming checks the data again first.
 
+### Choosing the AI model
+
+The assistant, month review, payment reminders, and parcel parser all use one provider, chosen by `AI_PROVIDER` in `.env`.
+
+| `AI_PROVIDER` | Needs | Model |
+| --- | --- | --- |
+| `gemini` (default) | `GEMINI_API_KEY` | Gemini |
+| `huggingface` | `HF_TOKEN` | `HF_MODEL`, default `meta-llama/Llama-3.3-70B-Instruct` |
+
+For Hugging Face, create a token at https://huggingface.co/settings/tokens with the "Make calls to Inference Providers" permission, then set `AI_PROVIDER=huggingface`, `HF_TOKEN`, and optionally `HF_MODEL`. Pick a chat model that supports tool calling, since the assistant relies on it. Reading manifest images needs Gemini; with Hugging Face, paste the manifest text. Restart the server after changing `.env`. Never commit the token; `.env` is gitignored.
+
 ## Features
 
 - Company accounts: invoices, buyers, and settings are shared by everyone in a company
@@ -137,7 +148,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Create an account on the sign-in page, then save invoices from the workspace.
 
-Set `GEMINI_API_KEY` in `.env` before using the AI parcel parser. Set `DATABASE_URL` and `SESSION_SECRET` before the API starts. SMTP settings for invoice email are entered in the app when you send it.
+Set `GEMINI_API_KEY` in `.env` before using the AI features, or switch to Hugging Face (see below). Set `DATABASE_URL` and `SESSION_SECRET` before the API starts. SMTP settings for invoice email are entered in the app when you send it.
 
 Password reset emails use `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM`. Without them, the reset link is printed to the server log instead. Set `APP_URL` to your public site address so reset links point to it.
 

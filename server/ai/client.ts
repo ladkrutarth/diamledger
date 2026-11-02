@@ -33,3 +33,17 @@ export function gemini(): GoogleGenAI {
   });
   return client;
 }
+
+export type AiProvider = 'gemini' | 'huggingface';
+
+/** AI_PROVIDER=huggingface selects Hugging Face; anything else keeps Gemini. */
+export function aiProvider(): AiProvider {
+  return process.env.AI_PROVIDER?.trim().toLowerCase() === 'huggingface' ? 'huggingface' : 'gemini';
+}
+
+/** The model name recorded against each AI call. */
+export function activeModelName(): string {
+  return aiProvider() === 'huggingface'
+    ? process.env.HF_MODEL?.trim() || 'meta-llama/Llama-3.3-70B-Instruct'
+    : GEMINI_MODEL;
+}

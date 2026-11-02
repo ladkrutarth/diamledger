@@ -2,7 +2,8 @@ import type { Express } from 'express';
 import { Type } from '@google/genai';
 import { requireUser } from './auth.js';
 import { callModel, usageFrom } from './ai/call.js';
-import { AiUnavailableError, GEMINI_MODEL, gemini } from './ai/client.js';
+import { AiUnavailableError, GEMINI_MODEL, activeModelName, aiProvider, gemini } from './ai/client.js';
+import { MANIFEST_SHAPE, hfJson } from './ai/huggingface.js';
 import type { DbPool } from './db.js';
 import { currentUser } from './http.js';
 
@@ -48,11 +49,21 @@ Always extract exact carats (e.g. 1.25, 2.504), pieces, rate per carat in USD, t
       const context = {
         feature: 'manifest_parser' as const,
         promptVersion: MANIFEST_PROMPT_VERSION,
-        model: GEMINI_MODEL,
+        model: activeModelName(),
         organizationId: user.organizationId,
         userId: user.id,
       };
-      const response = await callModel(pool, context, async (signal) => {
+      const response = await callModel<{ text?: string }>(pool, context, async (signal) => {
+        if (aiProvider() === 'huggingface') {
+          if (imageBase64) {
+            throw new AiUnavailableError(
+              'not_configured',
+              'Reading manifest images needs AI_PROVIDER=gemini. Paste the manifest text instead.',
+            );
+          }
+          const { value, usage } = await hfJson(systemPrompt, String(contents[contents.length - 1].text), MANIFEST_SHAPE, signal);
+          return { value: { text: JSON.stringify(value) }, usage };
+        }
         const result = await gemini().models.generateContent({
         model: GEMINI_MODEL,
         contents: { parts: contents },

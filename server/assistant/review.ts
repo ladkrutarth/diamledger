@@ -1,7 +1,7 @@
 import type { DbPool } from '../db.js';
 import type { CurrentUser } from '../http.js';
 import { callModel } from '../ai/call.js';
-import { GEMINI_MODEL } from '../ai/client.js';
+import { activeModelName } from '../ai/client.js';
 import { bankLines } from '../bank.js';
 import { filingSummary } from '../filing.js';
 import { forexSummary } from '../forex.js';
@@ -189,7 +189,7 @@ async function explain(
       {
         feature: 'month_review',
         promptVersion: REVIEW_PROMPT_VERSION,
-        model: GEMINI_MODEL,
+        model: activeModelName(),
         organizationId: user.organizationId,
         userId: user.id,
       },

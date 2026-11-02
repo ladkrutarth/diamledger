@@ -27,6 +27,9 @@ services:
       NODE_ENV: production
       PORT: 3000
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
+      HF_TOKEN: ${HF_TOKEN:-}
+      HF_MODEL: ${HF_MODEL:-meta-llama/Llama-3.3-70B-Instruct}
       APP_URL: ${APP_URL:-http://localhost:3000}
       DATABASE_URL: postgresql://diamondx:diamondx@postgres:5432/diamondx
       SESSION_SECRET: ${SESSION_SECRET:-dev-session-secret-change-me}

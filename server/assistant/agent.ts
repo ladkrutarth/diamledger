@@ -2,7 +2,8 @@ import type { Content, FunctionCall, Part } from '@google/genai';
 import type { DbPool } from '../db.js';
 import type { CurrentUser } from '../http.js';
 import { callModel, usageFrom, type TokenUsage } from '../ai/call.js';
-import { GEMINI_MODEL, gemini } from '../ai/client.js';
+import { GEMINI_MODEL, activeModelName, aiProvider, gemini } from '../ai/client.js';
+import { hfAssistantModel } from '../ai/huggingface.js';
 import { canUseTaxTools, runTool, toolDeclarations, type ProposedAction, type ToolDeclaration, type ToolSource } from './tools.js';
 
 export const ASSISTANT_PROMPT_VERSION = 'assistant-v2';
@@ -47,6 +48,10 @@ export const geminiAssistantModel: AssistantModel = async ({ system, contents, t
     .join('');
   return { text, functionCalls: response.functionCalls, content, usage: usageFrom(response.usageMetadata) };
 };
+
+/** The assistant model for the configured AI_PROVIDER. */
+export const defaultAssistantModel: AssistantModel = (request, signal) =>
+  (aiProvider() === 'huggingface' ? hfAssistantModel : geminiAssistantModel)(request, signal);
 
 const ROLE_NAMES: Record<CurrentUser['role'], string> = {
   admin: 'a company admin',
@@ -171,7 +176,7 @@ export async function runTurn(
       {
         feature: 'assistant',
         promptVersion: ASSISTANT_PROMPT_VERSION,
-        model: GEMINI_MODEL,
+        model: activeModelName(),
         organizationId: user.organizationId,
         userId: user.id,
       },

@@ -9,7 +9,8 @@ import {
   type CreateMailTransport,
 } from './emailDispatch.js';
 import { callModel, usageFrom, type TokenUsage } from './ai/call.js';
-import { GEMINI_MODEL, gemini } from './ai/client.js';
+import { GEMINI_MODEL, activeModelName, aiProvider, gemini } from './ai/client.js';
+import { hfReminderText } from './ai/huggingface.js';
 import { asyncHandler, currentUser, isRecord, isUuid, requireUser, type CurrentUser } from './http.js';
 import type { StoredInvoice } from './invoiceValidation.js';
 
@@ -88,6 +89,10 @@ export const geminiReminderText: DraftReminderText = async (facts, signal) => {
   });
   return { ...JSON.parse(response.text || '{}'), usage: usageFrom(response.usageMetadata) };
 };
+
+/** The reminder drafter for the configured AI_PROVIDER. */
+export const defaultReminderText: DraftReminderText = (facts, signal) =>
+  aiProvider() === 'huggingface' ? hfReminderText(SYSTEM_PROMPT)(facts, signal) : geminiReminderText(facts, signal);
 
 export function reminderTone(daysOverdue: number, remindersSent: number): ReminderTone {
   if (remindersSent >= 2 || daysOverdue > 60) return 'final';
@@ -341,7 +346,7 @@ export async function createReminderDraft(
         {
           feature: 'payment_reminder',
           promptVersion: REMINDER_PROMPT_VERSION,
-          model: GEMINI_MODEL,
+          model: activeModelName(),
           organizationId: user.organizationId,
           userId: user.id,
         },
@@ -358,7 +363,7 @@ export async function createReminderDraft(
   const inserted = await pool.query<{ id: string; created_at: Date }>(
     `INSERT INTO payment_reminders (organization_id, invoice_id, created_by, model, prompt_version, subject, body_html)
      VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
-    [user.organizationId, row.id, user.id, source === 'model' ? GEMINI_MODEL : 'template', REMINDER_PROMPT_VERSION,
+    [user.organizationId, row.id, user.id, source === 'model' ? activeModelName() : 'template', REMINDER_PROMPT_VERSION,
       subject, html],
   );
   console.info(JSON.stringify({
