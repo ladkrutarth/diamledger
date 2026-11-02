@@ -24,7 +24,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NODE_ENV: production
+      APP_ENV: production
       PORT: 3000
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       AI_PROVIDER: ${AI_PROVIDER:-gemini}

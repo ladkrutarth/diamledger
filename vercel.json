@@ -37,8 +37,8 @@
     }
   ],
   "functions": {
-    "api/index.ts": {
-      "includeFiles": "db/**",
+    "api/index.py": {
+      "includeFiles": "{db/**,backend/diamondx/**,src/data/sampleInvoices.json}",
       "maxDuration": 15
     }
   },

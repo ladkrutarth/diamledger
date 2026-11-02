@@ -17,6 +17,8 @@ export default defineConfig(() => {
       hmr: process.env.DISABLE_HMR !== 'true',
       // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // `npm run dev:web`: send /api to the Python API, which forwards routes it has not taken over to Node.
+      proxy: process.env.API_PROXY_TARGET ? { '/api': { target: process.env.API_PROXY_TARGET } } : undefined,
     },
   };
 });
