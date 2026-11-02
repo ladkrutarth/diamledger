@@ -952,3 +952,48 @@ export function readFileBase64(file: File): Promise<string> {
     reader.readAsDataURL(file);
   });
 }
+
+// ---------- Plan and billing ----------
+
+export type BillingCycle = 'monthly' | 'yearly';
+export type PlanFeature = 'advanced_tax' | 'audit' | 'ai' | 'outside_accountants' | 'practice';
+export type PlanPrice = { baseInr: number; gstInr: number; totalInr: number; totalPaise: number };
+
+export type BillingPlan = {
+  key: 'starter' | 'growth' | 'business' | 'ca_firm';
+  name: string;
+  audience: string;
+  monthlyInr: number;
+  yearlyInr: number;
+  limits: { users: number; invoicesPerMonth: number | null; clients: number | null };
+  features: PlanFeature[];
+  highlights: string[];
+  prices: Record<BillingCycle, PlanPrice>;
+  yearlySavingInr: number;
+};
+
+export type BillingSummary = {
+  planKey: BillingPlan['key'] | 'trial';
+  planName: string;
+  cycle: BillingCycle | null;
+  status: string;
+  access: 'trial' | 'active' | 'grace' | 'lapsed';
+  daysLeft: number | null;
+  trialEndsAt: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  limits: BillingPlan['limits'];
+  features: PlanFeature[];
+  usage: { users: number; invoicesThisMonth: number; clients: number };
+  paymentsEnabled: boolean;
+  payments: Array<{ id: string; planKey: string; cycle: BillingCycle | null; amountInr: number; status: string; method: string; paidAt: string }>;
+};
+
+export type CheckoutStart = {
+  subscriptionId: string;
+  keyId: string;
+  name: string;
+  description: string;
+  amountInr: number;
+  prefill: { email: string; name: string };
+};

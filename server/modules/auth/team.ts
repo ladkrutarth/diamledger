@@ -3,6 +3,7 @@ import type { Express } from 'express';
 import type { DbPool } from '../../core/db.js';
 import { isValidEmail, MIN_PASSWORD_LENGTH, normalizeEmail } from './auth.js';
 import { asyncHandler, currentUser, isRole, isUuid, requireAdmin, type Role } from '../../core/http.js';
+import { limitMessage } from '../billing/billing.js';
 
 type MemberRow = { id: string; email: string; role: string; created_at: Date };
 
@@ -38,6 +39,8 @@ export function registerTeamRoutes(app: Express, pool: DbPool): void {
     if (password.length < MIN_PASSWORD_LENGTH) {
       return res.status(400).json({ error: 'Temporary password must be at least 8 characters.' });
     }
+    const overLimit = await limitMessage(pool, currentUser(res).organizationId, 'users');
+    if (overLimit) return res.status(402).json({ error: overLimit, code: 'plan_limit' });
 
     try {
       const result = await pool.query<MemberRow>(

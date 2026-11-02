@@ -38,6 +38,7 @@ import { registerClientRequestRoutes } from './modules/accountant/clientRequests
 import { registerForeignPaymentRoutes } from './modules/tax/foreignPayments.js';
 import { defaultNoticeReply, registerNoticeRoutes, type DraftNoticeReply } from './modules/tax/notices.js';
 import { registerPracticeRoutes } from './modules/accountant/practice.js';
+import { registerBillingRoutes, subscriptionGuard } from './modules/billing/billing.js';
 import { registerPurchaseRoutes } from './modules/tax/purchases.js';
 import { registerStockRoutes } from './modules/stock/stock.js';
 import { registerTallySyncRoutes } from './modules/banking/tallySync.js';
@@ -50,6 +51,7 @@ export type AppOptions = {
   assistantModel?: AssistantModel;
   fetchRates?: typeof fetch;
   draftNoticeReply?: DraftNoticeReply;
+  razorpayFetch?: typeof fetch;
 };
 
 const PgSession = connectPgSimple(session);
@@ -123,6 +125,7 @@ export function createApp(pool: DbPool, options: AppOptions = {}): Express {
 
   app.use(loadUser(pool));
   app.use(charteredAccountantGuard);
+  app.use(subscriptionGuard(pool));
   registerRateLimits(app, pool);
   app.use(auditTrail(pool));
 
@@ -137,6 +140,7 @@ export function createApp(pool: DbPool, options: AppOptions = {}): Express {
   registerExportReportRoutes(app, pool);
   registerParcelRoutes(app, pool);
   registerPortalRoutes(app, pool);
+  registerBillingRoutes(app, pool, options.razorpayFetch ?? fetch);
   registerPurchaseRoutes(app, pool);
   registerStockRoutes(app, pool);
   registerAuditCheckRoutes(app, pool);

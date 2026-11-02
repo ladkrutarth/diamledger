@@ -170,6 +170,14 @@ const RULES: LimitRule[] = [
     key: userOrIp,
   },
   {
+    path: '/api/billing/checkout',
+    name: 'billing-checkout',
+    windowMinutes: 60,
+    limit: 20,
+    message: 'Too many checkout attempts. Try again in an hour.',
+    key: userOrIp,
+  },
+  {
     path: '/api/tally/import',
     name: 'tally-import',
     windowMinutes: 60,

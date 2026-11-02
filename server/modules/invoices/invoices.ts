@@ -2,6 +2,7 @@ import type { Express } from 'express';
 import type { PoolClient } from 'pg';
 import type { DbPool } from '../../core/db.js';
 import { closedMonthMessage } from '../tax/closedMonths.js';
+import { limitMessage } from '../billing/billing.js';
 import { asyncHandler, currentUser, requireAdmin, requireUser } from '../../core/http.js';
 import { financialYear, invoiceFacts, isUuid, validateInvoice, type StoredInvoice } from './invoiceValidation.js';
 
@@ -296,9 +297,14 @@ export function registerInvoiceRoutes(app: Express, pool: DbPool): void {
     }
     const closed = await closedMonthMessage(pool, user.organizationId, existing.invoice_date);
     if (closed) return res.status(409).json({ error: closed });
+    if (next === 'issued') {
+      const overLimit = await limitMessage(pool, user.organizationId, 'invoices');
+      if (overLimit) return res.status(402).json({ error: overLimit, code: 'plan_limit' });
+    }
 
     await pool.query(
-      'UPDATE invoices SET status = $3, updated_at = now() WHERE id = $1 AND organization_id = $2',
+      `UPDATE invoices SET status = $3, updated_at = now(), issued_at = CASE WHEN $3 = 'issued' THEN now() ELSE issued_at END
+       WHERE id = $1 AND organization_id = $2`,
       [existing.id, user.organizationId, next],
     );
     if (next === 'issued') await refreshPaidStatus(pool, existing.id);

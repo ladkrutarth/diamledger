@@ -27,6 +27,7 @@ import {
   Diamond,
   MessageSquare,
   Briefcase,
+  CreditCard,
 } from 'lucide-react';
 import { InvoiceState } from './types/invoice';
 import { A1005InvoicePreview } from './features/invoices/A1005InvoicePreview';
@@ -51,6 +52,7 @@ import { ActivityPage } from './features/company/ActivityPage';
 import { DiamondsPage } from './features/diamonds/DiamondsPage';
 import { PracticePage } from './features/accountant/PracticePage';
 import { RequestsPage } from './features/accountant/RequestsPage';
+import { BillingPage } from './features/billing/BillingPage';
 import { InvoiceTaxPanel } from './features/invoices/InvoiceTaxPanel';
 import {
   api,
@@ -62,6 +64,7 @@ import {
   type InvoiceRecord,
   type InvoiceStatus,
   type InvoiceSummary,
+  type BillingSummary,
   type ShipmentCheck,
   type WorkspaceCompany,
   ROLE_LABEL,
@@ -71,7 +74,7 @@ import { applyBuyer, buildNewInvoice, buyerFromConsignee, duplicateInvoice } fro
 
 type View =
   | 'workspace' | 'dashboard' | 'invoices' | 'reminders' | 'buyers' | 'company' | 'team' | 'account' | 'tax' | 'activity' | 'diamonds'
-  | 'requests' | 'practice';
+  | 'requests' | 'practice' | 'billing';
 type Module = 'editor' | 'payments' | 'erp' | 'email' | 'tax';
 
 function readResetToken(): string | null {
@@ -98,6 +101,13 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [companies, setCompanies] = useState<WorkspaceCompany[]>([]);
+  const [billing, setBilling] = useState<BillingSummary | null>(null);
+
+  const refreshBilling = useCallback(() => {
+    api<BillingSummary>('/api/billing')
+      .then(setBilling)
+      .catch(() => setBilling(null));
+  }, []);
 
   const isAdmin = user?.role === 'admin';
   const isCharteredAccountant = user?.role === 'ca';
@@ -140,6 +150,11 @@ export default function App() {
       .then((result) => setCompanies(result.companies))
       .catch(() => setCompanies([]));
   }, [user?.id]);
+
+  useEffect(() => {
+    if (user) refreshBilling();
+    else setBilling(null);
+  }, [user?.id, user?.organizationId, refreshBilling]);
 
   const switchCompany = async (organizationId: string) => {
     try {
@@ -409,6 +424,7 @@ export default function App() {
         ...(canUseTaxDesk
           ? ([['activity', 'Activity', <History className="w-4 h-4" />]] as Array<[View, string, React.ReactNode]>)
           : []),
+        ['billing', 'Plan & billing', <CreditCard className="w-4 h-4" />],
         ['account', 'Account', <CircleUser className="w-4 h-4" />],
       ],
     },
@@ -535,6 +551,25 @@ export default function App() {
           )}
         </div>
       </header>
+      {billing && (billing.access === 'lapsed' || billing.access === 'grace' || (billing.access === 'trial' && (billing.daysLeft ?? 0) <= 5)) && (
+        <div
+          role="status"
+          className={`flex flex-wrap items-center justify-between gap-2 px-4 md:px-6 py-2 text-xs border-b ${
+            billing.access === 'trial' ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-red-50 border-red-200 text-red-800'
+          }`}
+        >
+          <span>
+            {billing.access === 'trial' && `Free trial: ${billing.daysLeft} day${billing.daysLeft === 1 ? '' : 's'} left.`}
+            {billing.access === 'grace' && 'The last plan payment did not go through. Razorpay is retrying.'}
+            {billing.access === 'lapsed' && 'The plan has ended, so this company is read-only. Your data is safe.'}
+          </span>
+          {view !== 'billing' && (
+            <button type="button" onClick={() => setView('billing')} className="font-semibold underline">
+              {isAdmin ? 'Choose a plan' : 'See plan'}
+            </button>
+          )}
+        </div>
+      )}
       <nav className="md:hidden flex gap-1 overflow-x-auto px-3 py-2 bg-stone-950">
         {navGroups.flatMap((group) => group.items).map(([key, label, icon]) => navButton(key, label, icon, true))}
       </nav>
@@ -592,6 +627,7 @@ export default function App() {
         />
       )}
       {view === 'account' && <AccountPage user={user} />}
+      {view === 'billing' && <BillingPage isAdmin={isAdmin} onChanged={refreshBilling} />}
       {view === 'requests' && <RequestsPage key={dataVersion} />}
       {view === 'practice' && hasClients && (
         <PracticePage

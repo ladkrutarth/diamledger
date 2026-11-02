@@ -26,8 +26,9 @@ The default sample exporter is **xyz LLC**.
 11. [Security](#security)
 12. [Monitoring and backups](#monitoring-and-backups)
 13. [Tests and CI](#tests-and-ci)
-14. [Adding a feature](#adding-a-feature)
-15. [Scripts](#scripts)
+14. [Plans and pricing](#plans-and-pricing)
+15. [Adding a feature](#adding-a-feature)
+16. [Scripts](#scripts)
 
 ---
 
@@ -86,6 +87,16 @@ The default sample exporter is **xyz LLC**.
 | Activity | Every change, with who made it and when; CSV download |
 | Assistant | Answers questions from the company's own data and proposes actions; see [AI](#ai) |
 
+### Subscriptions
+
+| Feature | What it does |
+| --- | --- |
+| Plans | Starter, Growth, Business, and CA Firm, billed monthly or yearly in rupees with 18% GST; see [Plans and pricing](#plans-and-pricing) |
+| Free trial | Every new company gets 14 days with every feature |
+| Payments | Razorpay Checkout (UPI, cards, net banking) with automatic renewal; webhooks keep the plan in step |
+| Limits | Users, issued invoices per month, and client companies for CA firms, checked when you add one |
+| Read-only after expiry | When a trial or paid plan ends (after 3 grace days for a failed renewal), the company can still sign in, view, and download, but not change anything until a plan is paid |
+
 ---
 
 ## Architecture
@@ -114,6 +125,7 @@ flowchart TB
     app --> core["core/: db, http guards, security,<br/>rate limits, monitoring"]
     app --> modules["modules/: auth, invoices, company,<br/>collections, stock, banking, tax,<br/>accountant, activity"]
     app --> assistant["assistant/: agent, read-only tools, month review"]
+    app --> billing["modules/billing: plans, subscription guard"]
     modules --> ai["ai/: callModel with budget,<br/>timeout, and usage log"]
     assistant --> ai
   end
@@ -123,6 +135,8 @@ flowchart TB
   ai --> llm["Gemini or Hugging Face"]
   modules --> smtp["SMTP mail server"]
   modules --> rates["Reference rate feed"]
+  billing --> razorpay["Razorpay: checkout, subscriptions, webhooks"]
+  spa -- "Checkout popup" --> razorpay
   cron["Vercel Cron, daily"] -.-> modules
   app -.-> sentry["Sentry, optional"]
   spa -.-> sentry
@@ -141,7 +155,8 @@ flowchart LR
   health -- no --> session["Session cookie<br/>(stored in PostgreSQL)"]
   session --> user["Load user and<br/>active company"]
   user --> ca["CA guard:<br/>read-only except allowlist"]
-  ca --> limit["Rate limits"]
+  ca --> plan["Plan guard:<br/>read-only when lapsed,<br/>features by plan"]
+  plan --> limit["Rate limits"]
   limit --> audit["Activity log"]
   audit --> route["Route: role check,<br/>closed-month check, query"]
   route --> errors["Error handler<br/>(400 / 404 / 409 / 500)"]
@@ -194,6 +209,7 @@ Code is grouped by feature. Each server module owns its routes, SQL, and rules; 
 │   │   │                        forex, rates, refunds, TDS, audit checks,
 │   │   │                        3CD pack, notices, closed months
 │   │   ├── accountant/          Multi-company workspace, requests, practice
+│   │   ├── billing/             Plans and prices, Razorpay, subscription guard
 │   │   └── activity/            Activity log
 │   │
 │   ├── assistant/               Tool-calling agent, read-only tools, month review
@@ -206,7 +222,7 @@ Code is grouped by feature. Each server module owns its routes, SQL, and rules; 
 │   ├── components/              Shared UI: buttons, cards, tables, form fields
 │   ├── features/                One folder per area, matching the server
 │   │   ├── auth/  company/  buyers/  invoices/  collections/
-│   │   ├── dashboard/  diamonds/  tax/  accountant/  assistant/
+│   │   ├── dashboard/  diamonds/  tax/  accountant/  assistant/  billing/
 │   ├── utils/                   PDF, Tally XML, SAP, amount in words
 │   ├── types/, data/            Invoice types and sample invoices
 │   └── monitoring.ts            Browser Sentry
@@ -229,6 +245,7 @@ Code is grouped by feature. Each server module owns its routes, SQL, and rules; 
 | Tax desk | `modules/tax` | `features/tax` | `/api/tax/*`, `/api/purchases/*`, `/api/foreign-payments/*`, `/api/notices/*`, `/api/rates/*` |
 | Accountant | `modules/accountant` | `features/accountant` | `/api/workspace/*`, `/api/requests/*`, `/api/practice/*` |
 | Activity | `modules/activity` | `features/company` | `/api/audit` |
+| Plan & billing | `modules/billing` | `features/billing` | `/api/billing/*` |
 | Assistant | `assistant/` | `features/assistant` | `/api/assistant/*` |
 
 ---
@@ -247,6 +264,7 @@ Code is grouped by feature. Each server module owns its routes, SQL, and rules; 
 | Notices: log, edit, draft replies | ✓ | | ✓ | ✓ |
 | Requests: ask and reply | ✓ | ✓ | ✓ | ✓ |
 | Practice (across client companies) | Anyone with access to at least one client company | | | |
+| Choose, pay for, or cancel the plan | ✓ | | | |
 
 ¹ Allowed by the API; the tax desk screens are shown to admin, tax, and CA users.
 
@@ -301,13 +319,15 @@ erDiagram
   organizations ||--o{ ca_engagements : "firm to client fee"
   organizations ||--o{ ca_time_entries : "time logged"
   organizations ||--o{ ca_fee_bills : "fee bills"
+  organizations ||--o| organization_subscriptions : "plan"
+  organizations ||--o{ subscription_payments : "plan payments"
   organizations ||--o{ ai_calls : "AI usage"
   organizations ||--o{ assistant_sessions : "chats"
   assistant_sessions ||--o{ assistant_messages : "messages"
   assistant_sessions ||--o{ assistant_actions : "proposals"
 ```
 
-`reference_rates` holds daily exchange rates for everyone. Sessions live in `session`, rate-limit counters in `rate_limits`, and applied migrations in `schema_migrations`.
+`reference_rates` holds daily exchange rates for everyone; `razorpay_plans` caches the Razorpay plan IDs and `billing_events` records webhooks already handled. Sessions live in `session`, rate-limit counters in `rate_limits`, and applied migrations in `schema_migrations`.
 
 ---
 
@@ -411,6 +431,8 @@ Open [http://localhost:3000](http://localhost:3000) and sign in with the demo ac
 | `AI_TIMEOUT_MS` | | Per-call timeout, default 20000 |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | | Mail server for password reset |
 | `CRON_SECRET` | | Bearer token Vercel Cron sends to `/api/cron/rates` |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | | Razorpay API keys. Without them plans are shown but checkout is off |
+| `RAZORPAY_WEBHOOK_SECRET` | | Secret of the Razorpay webhook pointed at `/api/billing/webhook` |
 | `MIGRATE_ON_START` | | `false` skips migrations at start-up |
 | `SEED_DEMO_USER` | | `true` creates the demo account in production |
 | `VITE_SHOW_DEMO_LOGIN` | | `true` shows demo credentials on the sign-in page. Build time |
@@ -435,6 +457,7 @@ Schema changes live in `db/migrations` as numbered SQL files. Each file runs onc
 | `008` | Assistant tax actions |
 | `009` | Exchange rates, activity log, parcels, buyer portal |
 | `010` | Purchases and GSTR-2B, stock kinds, requests, notices, payments abroad, Tally vouchers, practice, buyer credit limits |
+| `011` | Subscriptions, Razorpay plans, plan payments, webhook events, and when each invoice was issued |
 
 Pending migrations run at start-up. To run them as a release step instead, set `MIGRATE_ON_START=false` and run `npm run migrate`.
 
@@ -500,6 +523,7 @@ Counters are stored in PostgreSQL, so limits hold across serverless instances. T
 | Tally import | 30 per hour per user |
 | Assistant question / month review | 30 / 10 per hour per user |
 | Buyer portal | 120 per 15 minutes per IP |
+| Plan checkout | 20 per hour per user |
 
 ---
 
@@ -534,6 +558,67 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the type check, the tests again
 
 ---
 
+## Plans and pricing
+
+Prices are per company, in Indian rupees, and exclude GST. 18% GST is added at checkout. Yearly billing costs 10 months (two months free). They are set in [`server/modules/billing/plans.ts`](server/modules/billing/plans.ts); change them there and the app, the checkout, and Razorpay follow.
+
+| Plan | For | Monthly | Yearly | With GST (month / year) | Users | Issued invoices a month | Adds |
+| --- | --- | ---: | ---: | ---: | :---: | :---: | --- |
+| **Starter** | A small exporter | ₹1,499 | ₹14,990 | ₹1,769 / ₹17,688 | 2 | 30 | Invoicing, PDF, Tally/SAP, payments, collections, filing check, register, realization, forex, bank match, stock and KP |
+| **Growth** | An exporter with an accountant | ₹3,999 | ₹39,990 | ₹4,719 / ₹47,188 | 5 | 150 | Purchases & GSTR-2B, TDS on payments abroad, Tally match, notices, AI, outside CA access |
+| **Business** | Preparing for tax audit | ₹7,999 | ₹79,990 | ₹9,439 / ₹94,388 | 15 | Unlimited | Audit checks and the Form 3CD pack |
+| **CA Firm** | A CA firm serving exporters | ₹2,499 | ₹24,990 | ₹2,949 / ₹29,488 | 5 | 30 | Practice view for up to 25 client companies |
+
+A CA works inside each client's company on the client's plan. The CA Firm plan covers the firm's own practice view across clients.
+
+### Why these prices
+
+| Product (India) | Price seen | What it covers |
+| --- | --- | --- |
+| Zoho Books | ₹899–₹9,999 a month, about 17% off yearly | General GST accounting |
+| TallyPrime | Silver ₹22,500 once or about ₹750 a month rental; Gold ₹67,500 | Accounting, single or multi-user |
+| Jewellery ERPs (Karat, SwarnApp, RPS, Globe) | About ₹25,000–₹40,000 a year | Jewellery billing and stock |
+| CA practice tools (CADashboard, Cone, Hisabkitab) | About ₹5,000–₹55,000 a year | Client and task tracking |
+
+Starter sits near a jewellery ERP. Growth and Business are priced above general accounting because they replace accountant hours on export compliance: GSTR-2B credit matching, FEMA realization, e-BRC, TDS on foreign payments, notices, and audit preparation. CA Firm sits in the middle of practice tools. Prices were checked in November 2026 from public listings and resellers; review them before launch.
+
+### Turning on payments
+
+1. Create a [Razorpay](https://razorpay.com) account, and under **Account & Settings → API keys** create test keys (`rzp_test_...`).
+2. Set `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`.
+3. Under **Webhooks**, add `https://<your site>/api/billing/webhook` with the `subscription.*` events (activated, charged, pending, halted, cancelled, completed, resumed), and set its secret as `RAZORPAY_WEBHOOK_SECRET`.
+4. Pay for a plan with a [test card or UPI ID](https://razorpay.com/docs/payments/payments/test-card-details/), and check it on the Plan & billing page.
+5. When Razorpay activates your live account, swap in the live keys and a live webhook.
+
+Razorpay plans are created on first checkout for each plan, cycle, and price, so there is nothing to set up in the Razorpay dashboard. A price change creates a new Razorpay plan; existing subscribers stay on their old price until they change plan.
+
+```mermaid
+sequenceDiagram
+  actor A as Company admin
+  participant UI as Plan & billing page
+  participant API as /api/billing
+  participant RP as Razorpay
+  participant DB as PostgreSQL
+
+  A->>UI: Chooses a plan and monthly or yearly
+  UI->>API: checkout
+  API->>RP: Create plan (first time) and subscription
+  API->>DB: Remember the pending subscription
+  API-->>UI: Subscription ID and key
+  UI->>RP: Open Checkout (UPI, card, net banking)
+  RP-->>UI: Payment ID and signature
+  UI->>API: verify
+  API->>API: Check the signature with the key secret
+  API->>DB: Switch the plan, cancel the one it replaces
+  RP-)API: Webhook: activated, charged, halted, cancelled
+  API->>API: Check the webhook signature, skip repeats
+  API->>DB: Update status, period, and payment history
+```
+
+Not covered yet: GST tax invoices for the subscription itself (Razorpay sends a payment receipt; issue a GST invoice from your own books, or turn on Razorpay Invoices), coupons, and refunds, which are made from the Razorpay dashboard.
+
+---
+
 ## Adding a feature
 
 1. **Schema:** add `db/migrations/NNN_name.sql` with the next number.
@@ -545,6 +630,7 @@ GitHub Actions (`.github/workflows/ci.yml`) runs the type check, the tests again
    - If a CA must write to it, add the path to the allowlist in `charteredAccountantGuard`.
    - Add a rule to `modules/activity/audit.ts` so the change shows in Activity.
    - Route any AI call through `callModel`, and add its feature name to `ModelCallContext`.
+   - If it belongs to a paid tier, add its path to `featureForPath` in `modules/billing/plans.ts`.
 3. **Browser:** add response types to `src/api/client.ts`, a screen under `src/features/<area>/`, and a navigation entry in `App.tsx` or a desk in `TaxPage.tsx`.
 4. **Tests:** add API tests under `server/tests/`, and run `npm run lint && npm test`.
 

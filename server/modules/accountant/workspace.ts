@@ -5,6 +5,7 @@ import { asyncHandler, currentUser, isUuid, requireAdmin, requireUser, type Role
 import { filingSummary } from '../tax/filing.js';
 import { realizationRows } from '../tax/realization.js';
 import { taxSettings } from '../tax/taxShared.js';
+import { limitMessage } from '../billing/billing.js';
 
 type Company = { id: string; name: string; role: Role; home: boolean };
 
@@ -238,6 +239,16 @@ export function registerWorkspaceRoutes(app: Express, pool: DbPool): void {
     }
     if (accountant.organization_id === user.organizationId) {
       return res.status(409).json({ error: 'That person is already on your team. Change their role on the team list instead.' });
+    }
+    const existingAccess = await pool.query(
+      `SELECT 1 FROM organization_access a JOIN users u ON u.id = a.user_id
+       WHERE a.organization_id = $1 AND u.organization_id = $2 LIMIT 1`,
+      [user.organizationId, accountant.organization_id],
+    );
+    // A new client for the firm counts against the firm's plan; another person from a firm already here does not.
+    if (!existingAccess.rowCount) {
+      const overLimit = await limitMessage(pool, accountant.organization_id, 'clients');
+      if (overLimit) return res.status(402).json({ error: overLimit, code: 'plan_limit' });
     }
     await pool.query(
       `INSERT INTO organization_access (user_id, organization_id, role, granted_by)
