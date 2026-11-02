@@ -729,6 +729,7 @@ export default function App() {
       {isAssistantOpen && (
         <AssistantPanel
           userId={user.id}
+          role={user.role}
           onClose={() => setIsAssistantOpen(false)}
           onOpenInvoice={(id) => {
             setIsAssistantOpen(false);

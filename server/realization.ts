@@ -88,19 +88,23 @@ export async function realizationRows(pool: DbPool, organizationId: string) {
   return { settings, rows };
 }
 
+export async function realizationSummary(pool: DbPool, organizationId: string) {
+  const { settings, rows } = await realizationRows(pool, organizationId);
+  const open = rows.filter((row) => row.open);
+  return {
+    realizationMonths: settings.realizationMonths,
+    rows,
+    openCount: open.length,
+    openUsd: money(open.reduce((sum, row) => sum + row.dueUsd, 0)),
+    overdueCount: rows.filter((row) => row.flag === 'overdue').length,
+    dueSoonCount: rows.filter((row) => row.flag === 'due_soon').length,
+    needsBrcCount: rows.filter((row) => row.flag === 'needs_brc').length,
+  };
+}
+
 export function registerRealizationRoutes(app: Express, pool: DbPool): void {
   app.get('/api/tax/realization', taxReader, asyncHandler(async (_req, res) => {
-    const { settings, rows } = await realizationRows(pool, currentUser(res).organizationId);
-    const open = rows.filter((row) => row.open);
-    return res.json({
-      realizationMonths: settings.realizationMonths,
-      rows,
-      openCount: open.length,
-      openUsd: money(open.reduce((sum, row) => sum + row.dueUsd, 0)),
-      overdueCount: rows.filter((row) => row.flag === 'overdue').length,
-      dueSoonCount: rows.filter((row) => row.flag === 'due_soon').length,
-      needsBrcCount: rows.filter((row) => row.flag === 'needs_brc').length,
-    });
+    return res.json(await realizationSummary(pool, currentUser(res).organizationId));
   }));
 
   app.get('/api/tax/settings', taxReader, asyncHandler(async (_req, res) => {

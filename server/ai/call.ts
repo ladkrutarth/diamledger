@@ -5,7 +5,7 @@ import { AiUnavailableError } from './client.js';
 export type TokenUsage = { inputTokens?: number; outputTokens?: number };
 
 export type ModelCallContext = {
-  feature: 'manifest_parser' | 'payment_reminder' | 'assistant';
+  feature: 'manifest_parser' | 'payment_reminder' | 'assistant' | 'month_review';
   promptVersion: string;
   model: string;
   organizationId: string;

@@ -165,13 +165,15 @@ export type ReminderDraft = {
 
 export type ReminderSent = { id: string; status: 'sent'; mode: 'preview_simulated' | 'live_smtp'; sentAt: string };
 
-export type AssistantSource = { kind: 'invoice' | 'buyer' | 'summary'; id?: string; label: string };
+export type AssistantSource = { kind: 'invoice' | 'buyer' | 'summary' | 'tax'; id?: string; label: string };
 
 export type AssistantActionStatus = 'proposed' | 'confirmed' | 'rejected' | 'failed';
 
+export type AssistantActionKind = 'record_payment' | 'draft_reminder' | 'match_bank_line' | 'close_month';
+
 export type AssistantAction = {
   id: string;
-  kind: 'record_payment' | 'draft_reminder';
+  kind: AssistantActionKind;
   status: AssistantActionStatus;
   payload: {
     invoiceNumber?: string;
@@ -183,9 +185,49 @@ export type AssistantAction = {
     dueUsdAtProposal?: number;
     daysOverdue?: number;
     remindedInLastWeek?: boolean;
+    lineDate?: string;
+    score?: number;
+    reasons?: string[];
+    month?: string;
+    invoiceCount?: number;
   };
-  result?: { error?: string; dueUsd?: number; invoiceStatus?: string; reminderId?: string; subject?: string };
+  result?: {
+    error?: string;
+    dueUsd?: number;
+    invoiceStatus?: string;
+    reminderId?: string;
+    subject?: string;
+    month?: string;
+    closed?: boolean;
+  };
   createdAt: string;
+};
+
+export type MonthCloseStatus = 'closed' | 'ready' | 'blocked' | 'not_ended';
+
+export type MonthReviewFindings = {
+  month: string;
+  filing: {
+    invoiceCount: number;
+    readyCount: number;
+    issueCount: number;
+    companyIssues: string[];
+    invoicesWithIssues: Array<{ invoiceNumber: string; issues: string[] }>;
+  };
+  register: { count: number; taxableUsd: number; igstUsd: number };
+  realization: { openCount: number; openUsd: number; overdueCount: number; dueSoonCount: number; needsBrcCount: number };
+  forex: { paymentCount: number; missingRateCount: number; gainInr: number; lossInr: number; netInr: number };
+  bank: { unmatchedCount: number; strongMatchCount: number };
+  close: { status: MonthCloseStatus; detail: string };
+};
+
+export type MonthReview = {
+  sessionId: string;
+  month: string;
+  findings: MonthReviewFindings;
+  summary: string;
+  explanationSource: 'model' | 'fallback';
+  actions: AssistantAction[];
 };
 
 export type AssistantMessage = { id: string; role: 'user' | 'model'; text: string; createdAt: string };

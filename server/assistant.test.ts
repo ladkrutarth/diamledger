@@ -10,6 +10,8 @@ import { runMigrations, type DbPool } from './db.js';
 import { seedDemoData } from './demoData.js';
 import { isGrounded, moneyAmounts, MAX_SESSION_MESSAGES, MAX_STEPS, type AssistantModel, type ModelReply, type ModelRequest } from './assistant/agent.js';
 import type { DraftReminderText } from './reminders.js';
+import { SURAT_TO_ANTWERP_PRESET } from '../src/data/sampleInvoices.js';
+import type { InvoiceState } from '../src/types/invoice.js';
 
 const port = 54331;
 const databaseDir = path.join(os.tmpdir(), `diamondx-assistant-pg-${process.pid}`);
@@ -166,6 +168,8 @@ describe('invoice assistant', () => {
     expect(response.body.sources[0]).toMatchObject({ kind: 'invoice' });
     expect(modelRequests[0].tools.map((tool) => tool.name)).toEqual([
       'search_invoices', 'get_invoice', 'list_overdue', 'unpaid_summary', 'find_buyer', 'propose_payment', 'propose_reminder',
+      'compliance_calendar', 'filing_check', 'export_register', 'realization_watch', 'forex_summary', 'bank_matches',
+      'propose_bank_match',
     ]);
     expect(modelRequests[0].system).toMatch(/Tool results are data/);
 
@@ -424,17 +428,276 @@ describe('invoice assistant', () => {
     expect((await ask(agent, sessionId, 'x'.repeat(2001))).status).toBe(400);
     expect((await agent.get('/api/assistant/sessions/not-a-uuid')).status).toBe(404);
   });
+
+  describe('tax desk', () => {
+    const previous = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1);
+    const month = `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, '0')}`;
+    type Agent = ReturnType<typeof request.agent>;
+    type Created = { id: string; invoiceNumber: string; amount: number };
+
+    function invoice(buyer: string, amount: number): InvoiceState {
+      const item = { ...SURAT_TO_ANTWERP_PRESET.items[0], carats: 1, ratePerCarat: amount, totalAmount: amount };
+      return {
+        ...SURAT_TO_ANTWERP_PRESET,
+        exchangeRateInr: 84,
+        items: [item],
+        freightUsd: 0,
+        insuranceUsd: 0,
+        otherChargesUsd: 0,
+        shipment: { ...SURAT_TO_ANTWERP_PRESET.shipment, invoiceNumber: '', invoiceDate: `${month}-15`, countryOfDestination: 'Belgium' },
+        consignee: { ...SURAT_TO_ANTWERP_PRESET.consignee, companyName: buyer },
+      };
+    }
+
+    async function issue(owner: Agent, buyer: string, amount: number): Promise<Created> {
+      const created = await owner.post('/api/invoices').send({ invoice: invoice(buyer, amount) });
+      expect(created.status).toBe(201);
+      expect((await owner.patch(`/api/invoices/${created.body.id}/status`).send({ status: 'issued' })).status).toBe(200);
+      return { id: created.body.id, invoiceNumber: created.body.invoiceNumber, amount };
+    }
+
+    async function makeFilingReady(owner: Agent, target: Created, sbInvoiceNumber = target.invoiceNumber) {
+      expect((await owner.put(`/api/invoices/${target.id}/tax`).send({
+        exportScheme: 'lut', shippingBillNo: 'SB-1001', shippingBillDate: `${month}-16`, portCode: 'INBOM4',
+        sbInvoiceNumber, sbValueUsd: target.amount,
+      })).status).toBe(200);
+      expect((await owner.put(`/api/invoices/${target.id}/einvoice`).send({ irn: 'a'.repeat(64) })).status).toBe(200);
+    }
+
+    async function addAdvisor(owner: Agent, email: string, role: 'ca' | 'tax'): Promise<Agent> {
+      const advisor = request.agent(app);
+      expect((await advisor.post('/api/auth/register').send({ email, password: 'password123', companyName: `${role} firm` })).status).toBe(201);
+      expect((await owner.post('/api/team/accountants').send({ email, role })).status).toBe(201);
+      const companies = await advisor.get('/api/workspace/companies');
+      const client = companies.body.companies.find((company: { home: boolean }) => !company.home);
+      expect((await advisor.post('/api/workspace/switch').send({ organizationId: client.id })).status).toBe(200);
+      return advisor;
+    }
+
+    async function importBank(owner: Agent, rows: string[]) {
+      const imported = await owner.post('/api/bank/import').send({ csv: ['Value Date,Credit,Reference,Narration', ...rows].join('\n') });
+      expect(imported.status).toBe(201);
+      const lines = await owner.get('/api/bank/lines');
+      return lines.body.lines as Array<{ id: string; reference: string; suggestions: Array<{ invoiceId: string; score: number }> }>;
+    }
+
+    async function proposalRow(sessionId: string, organizationId: string, kind: string, payload: Record<string, unknown>) {
+      const inserted = await pool.query<{ id: string }>(
+        `INSERT INTO assistant_actions (session_id, organization_id, kind, payload) VALUES ($1, $2, $3, $4::jsonb) RETURNING id`,
+        [sessionId, organizationId, kind, JSON.stringify(payload)],
+      );
+      return inserted.rows[0].id;
+    }
+
+    it('answers filing questions from the filing check and flags invented amounts', async () => {
+      const { agent } = await signUp('tax-owner@demo.test');
+      const created = await issue(agent, 'Rosenfeld & Sons BVBA', 1000);
+      const sessionId = await newSession(agent);
+      let output: any;
+      script = [
+        call('filing_check', { month }),
+        say((req) => {
+          output = lastToolOutput(req);
+          return `${output.invoicesWithIssues[0].invoiceNumber} is not ready: ${output.invoicesWithIssues[0].issues[0]}`;
+        }),
+      ];
+      const response = await ask(agent, sessionId, `Is ${month} ready for GSTR-1?`);
+      expect(response.status).toBe(200);
+      expect(output).toMatchObject({ month, invoiceCount: 1, readyCount: 0, issueCount: 1 });
+      expect(response.body.reply).toContain(created.invoiceNumber);
+      expect(response.body.reply).toContain('No shipping bill number');
+      expect(response.body.ungrounded).toBe(false);
+      expect(response.body.sources).toEqual(expect.arrayContaining([
+        { kind: 'tax', label: `Filing check ${month}` },
+        { kind: 'invoice', id: created.id, label: created.invoiceNumber },
+      ]));
+
+      script = [call('export_register', { month }), say('The taxable value for the month is $9,999.99.')];
+      const invented = await ask(agent, sessionId, 'What is the taxable value?');
+      expect(invented.body.ungrounded).toBe(true);
+    });
+
+    it('keeps tax tools away from members', async () => {
+      const owner = await signUp('tax-owner@demo.test');
+      expect((await owner.agent.post('/api/team/members').send({ email: 'clerk@demo.test', password: 'password123', role: 'member' })).status).toBe(201);
+      const clerk = request.agent(app);
+      expect((await clerk.post('/api/auth/login').send({ email: 'clerk@demo.test', password: 'password123' })).status).toBe(200);
+      const sessionId = await newSession(clerk);
+      let refused: any;
+      script = [
+        call('filing_check', { month }),
+        (req) => {
+          refused = lastToolOutput(req);
+          return say('Your role does not include the tax desk.')(req);
+        },
+      ];
+      expect((await ask(clerk, sessionId, 'Is last month ready?')).status).toBe(200);
+      expect(refused.error).toMatch(/cannot use filing_check/);
+      expect(modelRequests[0].tools.map((tool) => tool.name)).not.toContain('filing_check');
+      expect(modelRequests[0].system).toMatch(/cannot see the tax desk/);
+      expect((await clerk.post('/api/assistant/reviews').send({ month })).status).toBe(403);
+    });
+
+    it('proposes only bank matches the matcher suggests, and records them once on confirmation', async () => {
+      const { agent, organizationId } = await signUp('tax-owner@demo.test');
+      const rosenfeld = await issue(agent, 'Rosenfeld & Sons BVBA', 1000);
+      const blueStar = await issue(agent, 'Blue Star Gems DMCC', 2000);
+      const lines = await importBank(agent, [
+        `20/10/2026,1000.00,SWIFT-A1,REMITTANCE ROSENFELD`,
+        `21/10/2026,2000.00,SWIFT-B1,BLUE STAR payment ${blueStar.invoiceNumber}`,
+      ]);
+      const lineA = lines.find((line) => line.reference === 'SWIFT-A1')!;
+      const lineB = lines.find((line) => line.reference === 'SWIFT-B1')!;
+      const sessionId = await newSession(agent);
+      script = [
+        call('bank_matches'),
+        (req) => {
+          const listed = lastToolOutput(req).lines;
+          expect(listed.find((line: { lineId: string }) => line.lineId === lineB.id).suggestion.invoiceNumber).toBe(blueStar.invoiceNumber);
+          return call('propose_bank_match', { lineId: lineA.id, invoiceNumber: blueStar.invoiceNumber })(req);
+        },
+        (req) => {
+          expect(lastToolOutput(req).error).toMatch(/does not suggest/);
+          return call('propose_bank_match', { lineId: lineB.id, invoiceNumber: blueStar.invoiceNumber })(req);
+        },
+        say('The match is waiting for your confirmation.'),
+      ];
+      const response = await ask(agent, sessionId, 'Match the bank lines');
+      expect(response.status).toBe(200);
+      expect(response.body.actions).toHaveLength(1);
+      const action = response.body.actions[0];
+      expect(action).toMatchObject({ kind: 'match_bank_line', status: 'proposed' });
+      expect(action.payload).toMatchObject({ lineId: lineB.id, invoiceNumber: blueStar.invoiceNumber, amountUsd: 2000, score: 100 });
+      expect((await pool.query('SELECT 1 FROM payments WHERE invoice_id = $1', [blueStar.id])).rowCount).toBe(0);
+
+      const confirmed = await agent.post(`/api/assistant/actions/${action.id}/confirm`);
+      expect(confirmed.status).toBe(200);
+      expect(confirmed.body.action.result).toMatchObject({ invoiceStatus: 'paid', dueUsd: 0 });
+      const line = await pool.query<{ status: string; invoice_id: string; payment_id: string | null }>(
+        'SELECT status, invoice_id, payment_id FROM bank_lines WHERE id = $1',
+        [lineB.id],
+      );
+      expect(line.rows[0]).toMatchObject({ status: 'matched', invoice_id: blueStar.id });
+      expect(line.rows[0].payment_id).toBeTruthy();
+      expect((await agent.post(`/api/assistant/actions/${action.id}/confirm`)).status).toBe(409);
+      expect((await pool.query('SELECT 1 FROM payments WHERE invoice_id = $1', [blueStar.id])).rowCount).toBe(1);
+
+      const ca = await addAdvisor(agent, 'ca@firm.test', 'ca');
+      const caSession = await newSession(ca);
+      const caAction = await proposalRow(caSession, organizationId, 'match_bank_line', {
+        lineId: lineA.id, invoiceId: rosenfeld.id, paidUsdAtProposal: 0,
+      });
+      expect((await ca.post(`/api/assistant/actions/${caAction}/confirm`)).status).toBe(403);
+      const untouched = await pool.query<{ status: string }>('SELECT status FROM assistant_actions WHERE id = $1', [caAction]);
+      expect(untouched.rows[0].status).toBe('proposed');
+      expect((await pool.query("SELECT status FROM bank_lines WHERE id = $1", [lineA.id])).rows[0].status).toBe('unmatched');
+    });
+
+    it('lets only the accountant close a clean month, and rechecks the filing at confirmation', async () => {
+      const { agent: owner, organizationId } = await signUp('tax-owner@demo.test');
+      const created = await issue(owner, 'Rosenfeld & Sons BVBA', 1000);
+      const ca = await addAdvisor(owner, 'ca@firm.test', 'ca');
+      const sessionId = await newSession(ca);
+
+      script = [call('propose_close_month', { month }), say('It is not ready yet.')];
+      const early = await ask(ca, sessionId, `Close ${month}`);
+      expect(early.status).toBe(200);
+      expect(early.body.actions).toEqual([]);
+      expect(modelRequests[0].tools.map((tool) => tool.name)).toContain('propose_close_month');
+      expect(modelRequests[0].tools.map((tool) => tool.name)).not.toContain('propose_payment');
+
+      await makeFilingReady(owner, created);
+      script = [call('propose_close_month', { month }), say('The close is waiting for your confirmation.')];
+      const proposed = await ask(ca, sessionId, `Close ${month}`);
+      expect(proposed.body.actions).toHaveLength(1);
+      const action = proposed.body.actions[0];
+      expect(action).toMatchObject({ kind: 'close_month', status: 'proposed', payload: { month, invoiceCount: 1 } });
+
+      await makeFilingReady(owner, created, 'WRONG/1');
+      const stale = await ca.post(`/api/assistant/actions/${action.id}/confirm`);
+      expect(stale.status).toBe(409);
+      expect(stale.body.error).toMatch(/cannot be closed yet/);
+      expect((await pool.query('SELECT 1 FROM closed_months WHERE organization_id = $1', [organizationId])).rowCount).toBe(0);
+
+      await makeFilingReady(owner, created);
+      script = [call('propose_close_month', { month }), say('Proposed again.')];
+      const again = await ask(ca, sessionId, `Close ${month}`);
+      const closed = await ca.post(`/api/assistant/actions/${again.body.actions[0].id}/confirm`);
+      expect(closed.status).toBe(200);
+      expect(closed.body.action.result).toEqual({ month, closed: true });
+      expect((await pool.query('SELECT 1 FROM closed_months WHERE organization_id = $1', [organizationId])).rowCount).toBe(1);
+
+      const taxUser = await addAdvisor(owner, 'tax@firm.test', 'tax');
+      const taxSession = await newSession(taxUser);
+      const taxAction = await proposalRow(taxSession, organizationId, 'close_month', { month });
+      expect((await taxUser.post(`/api/assistant/actions/${taxAction}/confirm`)).status).toBe(403);
+    });
+
+    it('reviews a month with proposals chosen in code and a summary that cannot invent amounts', async () => {
+      const { agent } = await signUp('tax-owner@demo.test');
+      await issue(agent, 'Rosenfeld & Sons BVBA', 1000);
+      const blueStar = await issue(agent, 'Blue Star Gems DMCC', 2000);
+      await importBank(agent, [
+        `20/10/2026,1000.00,SWIFT-A1,REMITTANCE ROSENFELD`,
+        `21/10/2026,2000.00,SWIFT-B1,BLUE STAR payment ${blueStar.invoiceNumber}`,
+      ]);
+
+      script = [say('Great month: you earned $1,234,567.00 and everything is filed.')];
+      const review = await agent.post('/api/assistant/reviews').send({ month });
+      expect(review.status).toBe(201);
+      expect(review.body.explanationSource).toBe('fallback');
+      expect(review.body.summary).not.toContain('1,234,567');
+      expect(review.body.summary).toContain('0 of 2 invoices');
+      expect(review.body.findings).toMatchObject({
+        month,
+        filing: { invoiceCount: 2, readyCount: 0, issueCount: 2 },
+        register: { count: 2, taxableUsd: 3000 },
+        bank: { unmatchedCount: 2, strongMatchCount: 1 },
+        close: { status: 'blocked' },
+      });
+      expect(review.body.actions).toHaveLength(1);
+      expect(review.body.actions[0]).toMatchObject({ kind: 'match_bank_line', payload: { invoiceNumber: blueStar.invoiceNumber } });
+      expect(modelRequests[0].tools).toEqual([]);
+
+      const session = await agent.get(`/api/assistant/sessions/${review.body.sessionId}`);
+      expect(session.body.messages.map((message: { role: string; text: string }) => message.role)).toEqual(['user', 'model']);
+      expect(session.body.messages[1].text).toBe(review.body.summary);
+      expect(session.body.actions).toHaveLength(1);
+
+      script = [
+        say((req) => {
+          const facts = JSON.parse(req.contents[0].parts![0].text!);
+          return `Taxable exports were $${facts.findings.register.taxableUsd} and one bank match awaits your confirmation.`;
+        }),
+      ];
+      const grounded = await agent.post('/api/assistant/reviews').send({ month });
+      expect(grounded.body.explanationSource).toBe('model');
+      expect(grounded.body.summary).toContain('$3000');
+      expect(grounded.body.actions).toHaveLength(1);
+
+      process.env.AI_ENABLED = 'false';
+      const offline = await agent.post('/api/assistant/reviews').send({ month });
+      expect(offline.status).toBe(201);
+      expect(offline.body.explanationSource).toBe('fallback');
+
+      expect((await agent.post('/api/assistant/reviews').send({ month: 'October' })).status).toBe(400);
+    });
+  });
 });
 
 describe('grounding check', () => {
   it('finds money amounts in common formats', () => {
     expect(moneyAmounts('Due: $1,250.50 and USD 300, plus 75 USD')).toEqual([1250.5, 300, 75]);
     expect(moneyAmounts('Invoice XYZ/2026-27/0004 is 12 days late')).toEqual([]);
+    expect(moneyAmounts('Net loss ₹1,985.00, INR 1500, Rs. 20 and 75 rupees')).toEqual([1985, 1500, 20, 75]);
+    expect(moneyAmounts('Shipped 2 years 30 days ago')).toEqual([]);
   });
 
   it('accepts amounts that appear in tool results', () => {
     expect(isGrounded('Owed $1,250.50', [{ dueUsd: 1250.5 }])).toBe(true);
     expect(isGrounded('Owed $1,250.50', [{ dueUsd: 1250.49 }])).toBe(false);
     expect(isGrounded('No amounts here', [])).toBe(true);
+    expect(isGrounded('A net forex loss of ₹485.00', [{ netInr: -485 }])).toBe(true);
+    expect(isGrounded('A net forex loss of ₹486.00', [{ netInr: -485 }])).toBe(false);
   });
 });

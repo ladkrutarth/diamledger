@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { Express } from 'express';
 import type { DbPool } from './db.js';
-import { asyncHandler, currentUser, isUuid } from './http.js';
+import { asyncHandler, currentUser, isUuid, type CurrentUser } from './http.js';
 import { parseBankRate, recordPayment } from './payments.js';
 import { findColumn, money, parseAmount, parseCsv, parseLooseDate, taxReader, taxWriter } from './taxShared.js';
 
@@ -112,6 +112,110 @@ type BankLineRow = {
   invoice_number: string | null;
 };
 
+export type BankLineStatus = BankLineRow['status'];
+
+export async function bankLines(pool: DbPool, organizationId: string, status: BankLineStatus, limit = 300) {
+  const result = await pool.query<BankLineRow>(
+    `SELECT b.id, to_char(b.line_date, 'YYYY-MM-DD') AS line_date, b.amount_usd, b.bank_rate_inr, b.reference, b.narration,
+            b.status, b.invoice_id, i.invoice_number
+     FROM bank_lines b
+     LEFT JOIN invoices i ON i.id = b.invoice_id
+     WHERE b.organization_id = $1 AND b.status = $2
+     ORDER BY b.line_date DESC, b.created_at DESC
+     LIMIT ${Math.max(1, Math.floor(limit))}`,
+    [organizationId, status],
+  );
+  const invoices = status === 'unmatched' ? await openInvoices(pool, organizationId) : [];
+  return result.rows.map((row) => {
+    const amountUsd = money(row.amount_usd);
+    return {
+      id: row.id,
+      lineDate: row.line_date,
+      amountUsd,
+      bankRateInr: row.bank_rate_inr === null ? null : Number(row.bank_rate_inr),
+      reference: row.reference,
+      narration: row.narration,
+      status: row.status,
+      invoiceId: row.invoice_id,
+      invoiceNumber: row.invoice_number,
+      suggestions: status === 'unmatched'
+        ? suggestMatches({ amountUsd, reference: row.reference, narration: row.narration }, invoices)
+        : [],
+    };
+  });
+}
+
+/** The current matcher suggestion linking this unmatched line to this invoice, if there is one. */
+export async function currentSuggestion(pool: DbPool, organizationId: string, lineId: string, invoiceId: string) {
+  const line = await pool.query<{ amount_usd: string; reference: string; narration: string }>(
+    `SELECT amount_usd, reference, narration FROM bank_lines
+     WHERE id = $1 AND organization_id = $2 AND status = 'unmatched'`,
+    [lineId, organizationId],
+  );
+  const found = line.rows[0];
+  if (!found) return undefined;
+  const invoices = await openInvoices(pool, organizationId);
+  return suggestMatches(
+    { amountUsd: money(found.amount_usd), reference: found.reference, narration: found.narration },
+    invoices,
+  ).find((suggestion) => suggestion.invoiceId === invoiceId);
+}
+
+export type BankMatchResult =
+  | { ok: true; dueUsd: number; status: string; paymentId: string }
+  | { ok: false; status: 400 | 404 | 409; error: string };
+
+export async function matchBankLine(
+  pool: DbPool,
+  user: CurrentUser,
+  lineId: string,
+  invoiceId: string,
+  bankRateInr?: unknown,
+): Promise<BankMatchResult> {
+  const line = await pool.query<{ line_date: string; amount_usd: string; bank_rate_inr: string | null; reference: string; narration: string; status: string }>(
+    `SELECT to_char(line_date, 'YYYY-MM-DD') AS line_date, amount_usd, bank_rate_inr, reference, narration, status
+     FROM bank_lines WHERE id = $1 AND organization_id = $2`,
+    [lineId, user.organizationId],
+  );
+  const found = line.rows[0];
+  if (!found) return { ok: false, status: 404, error: 'Bank line not found.' };
+  if (found.status !== 'unmatched') return { ok: false, status: 409, error: 'This bank line is already dealt with.' };
+
+  const claimed = await pool.query(
+    `UPDATE bank_lines SET status = 'matched'
+     WHERE id = $1 AND organization_id = $2 AND status = 'unmatched'`,
+    [lineId, user.organizationId],
+  );
+  if (claimed.rowCount === 0) return { ok: false, status: 409, error: 'This bank line is already dealt with.' };
+
+  const release = () =>
+    pool.query(`UPDATE bank_lines SET status = 'unmatched' WHERE id = $1 AND payment_id IS NULL`, [lineId]);
+  let result: Awaited<ReturnType<typeof recordPayment>>;
+  try {
+    result = await recordPayment(
+      pool,
+      user,
+      invoiceId,
+      {
+        amountUsd: found.amount_usd,
+        paidOn: found.line_date,
+        reference: found.reference || found.narration.slice(0, 200),
+        bankRateInr: bankRateInr === undefined || bankRateInr === '' ? found.bank_rate_inr : bankRateInr,
+      },
+      { withinBalance: true },
+    );
+  } catch (error) {
+    await release();
+    throw error;
+  }
+  if (!result.ok) {
+    await release();
+    return { ok: false, status: result.status, error: result.error };
+  }
+  await pool.query('UPDATE bank_lines SET invoice_id = $2, payment_id = $3 WHERE id = $1', [lineId, invoiceId, result.paymentId]);
+  return { ok: true, dueUsd: result.state.dueUsd, status: result.state.status, paymentId: result.paymentId };
+}
+
 export function registerBankRoutes(app: Express, pool: DbPool): void {
   app.post('/api/bank/import', taxWriter, asyncHandler(async (req, res) => {
     const text = typeof req.body?.csv === 'string' ? req.body.csv : '';
@@ -157,17 +261,7 @@ export function registerBankRoutes(app: Express, pool: DbPool): void {
   app.get('/api/bank/lines', taxReader, asyncHandler(async (req, res) => {
     const status = req.query.status === 'matched' || req.query.status === 'ignored' ? req.query.status : 'unmatched';
     const organizationId = currentUser(res).organizationId;
-    const result = await pool.query<BankLineRow>(
-      `SELECT b.id, to_char(b.line_date, 'YYYY-MM-DD') AS line_date, b.amount_usd, b.bank_rate_inr, b.reference, b.narration,
-              b.status, b.invoice_id, i.invoice_number
-       FROM bank_lines b
-       LEFT JOIN invoices i ON i.id = b.invoice_id
-       WHERE b.organization_id = $1 AND b.status = $2
-       ORDER BY b.line_date DESC, b.created_at DESC
-       LIMIT 300`,
-      [organizationId, status],
-    );
-    const invoices = status === 'unmatched' ? await openInvoices(pool, organizationId) : [];
+    const lines = await bankLines(pool, organizationId, status);
     const counts = await pool.query<{ status: string; count: string }>(
       'SELECT status, COUNT(*) AS count FROM bank_lines WHERE organization_id = $1 GROUP BY status',
       [organizationId],
@@ -175,56 +269,15 @@ export function registerBankRoutes(app: Express, pool: DbPool): void {
     return res.json({
       status,
       counts: Object.fromEntries(counts.rows.map((row) => [row.status, Number(row.count)])),
-      lines: result.rows.map((row) => {
-        const amountUsd = money(row.amount_usd);
-        return {
-          id: row.id,
-          lineDate: row.line_date,
-          amountUsd,
-          bankRateInr: row.bank_rate_inr === null ? null : Number(row.bank_rate_inr),
-          reference: row.reference,
-          narration: row.narration,
-          status: row.status,
-          invoiceId: row.invoice_id,
-          invoiceNumber: row.invoice_number,
-          suggestions: status === 'unmatched'
-            ? suggestMatches({ amountUsd, reference: row.reference, narration: row.narration }, invoices)
-            : [],
-        };
-      }),
+      lines,
     });
   }));
 
   app.post('/api/bank/lines/:id/match', taxWriter, asyncHandler(async (req, res) => {
     if (!isUuid(req.params.id) || !isUuid(req.body?.invoiceId)) return res.status(404).json({ error: 'Bank line not found.' });
-    const user = currentUser(res);
-    const line = await pool.query<{ line_date: string; amount_usd: string; bank_rate_inr: string | null; reference: string; narration: string; status: string }>(
-      `SELECT to_char(line_date, 'YYYY-MM-DD') AS line_date, amount_usd, bank_rate_inr, reference, narration, status
-       FROM bank_lines WHERE id = $1 AND organization_id = $2`,
-      [req.params.id, user.organizationId],
-    );
-    const found = line.rows[0];
-    if (!found) return res.status(404).json({ error: 'Bank line not found.' });
-    if (found.status !== 'unmatched') return res.status(409).json({ error: 'This bank line is already dealt with.' });
-    const bankRate = req.body?.bankRateInr === undefined || req.body?.bankRateInr === '' ? found.bank_rate_inr : req.body.bankRateInr;
-    const result = await recordPayment(
-      pool,
-      user,
-      req.body.invoiceId,
-      {
-        amountUsd: found.amount_usd,
-        paidOn: found.line_date,
-        reference: found.reference || found.narration.slice(0, 200),
-        bankRateInr: bankRate,
-      },
-      { withinBalance: true },
-    );
+    const result = await matchBankLine(pool, currentUser(res), req.params.id, req.body.invoiceId, req.body?.bankRateInr);
     if (!result.ok) return res.status(result.status).json({ error: result.error });
-    await pool.query(
-      `UPDATE bank_lines SET status = 'matched', invoice_id = $3, payment_id = $4 WHERE id = $1 AND organization_id = $2`,
-      [req.params.id, user.organizationId, req.body.invoiceId, result.paymentId],
-    );
-    return res.json({ matched: true, dueUsd: result.state.dueUsd, status: result.state.status });
+    return res.json({ matched: true, dueUsd: result.dueUsd, status: result.status });
   }));
 
   app.post('/api/bank/lines/:id/ignore', taxWriter, asyncHandler(async (req, res) => {

@@ -47,11 +47,12 @@ function charteredAccountantGuard(req: Request, res: Response, next: NextFunctio
     path === '/api/auth/logout' ||
     path === '/api/auth/change-password' ||
     path === '/api/workspace/switch' ||
+    path.startsWith('/api/assistant/') ||
     /^\/api\/invoices\/[0-9a-f-]{36}\/review$/.test(path) ||
     /^\/api\/tax\/months\/\d{4}-\d{2}\/(close|open)$/.test(path);
   if (!allowed) {
     res.status(403).json({
-      error: 'A chartered accountant account can review invoices and close months. It cannot change invoices, payments, buyers, or the team.',
+      error: 'A chartered accountant account can review invoices, close months, and use the assistant. It cannot change invoices, payments, buyers, or the team.',
     });
     return;
   }

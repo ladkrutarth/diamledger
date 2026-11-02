@@ -1,12 +1,16 @@
 import type { Express } from 'express';
 import type { Content } from '@google/genai';
 import type { DbPool } from '../db.js';
-import { asyncHandler, currentUser, isUuid, requireUser, type CurrentUser } from '../http.js';
+import { asyncHandler, currentUser, isUuid, requireRoles, requireUser, type CurrentUser } from '../http.js';
 import { AiUnavailableError } from '../ai/client.js';
+import { currentSuggestion, matchBankLine } from '../bank.js';
+import { parseMonth } from '../closedMonths.js';
 import { recordPayment } from '../payments.js';
 import { createReminderDraft, type DraftReminderText } from '../reminders.js';
+import { closeMonth } from '../tax.js';
 import { runTurn, SessionFullError, type AssistantModel } from './agent.js';
-import type { ProposedAction } from './tools.js';
+import { runReview } from './review.js';
+import { CONFIRM_ROLES, monthCloseCheck, TAX_READERS, type ProposedAction } from './tools.js';
 
 const MAX_MESSAGE_LENGTH = 2000;
 
@@ -76,6 +80,15 @@ async function execute(
   action: ActionRow,
   drafter: DraftReminderText,
 ): Promise<Execution> {
+  if (action.kind === 'close_month') {
+    const month = parseMonth(action.payload.month);
+    if (!month) return { ok: false, error: 'This proposal has no valid month.' };
+    const check = await monthCloseCheck(pool, user.organizationId, month);
+    if (!check.ok) return { ok: false, error: check.error };
+    await closeMonth(pool, user.organizationId, month, user.id);
+    return { ok: true, result: { month, closed: true } };
+  }
+
   const invoiceId = String(action.payload.invoiceId ?? '');
   const current = await paidSoFar(pool, invoiceId, user.organizationId);
   if (!current) return { ok: false, error: 'This invoice no longer exists.' };
@@ -96,6 +109,20 @@ async function execute(
     );
     return outcome.ok
       ? { ok: true, result: { invoiceStatus: outcome.state.status, paidUsd: outcome.state.paidUsd, dueUsd: outcome.state.dueUsd } }
+      : { ok: false, error: outcome.error };
+  }
+
+  if (action.kind === 'match_bank_line') {
+    const lineId = String(action.payload.lineId ?? '');
+    if (!isUuid(lineId) || !(await currentSuggestion(pool, user.organizationId, lineId, invoiceId))) {
+      return {
+        ok: false,
+        error: 'This bank line or invoice has changed since the assistant proposed this. Ask the assistant again for an up-to-date proposal.',
+      };
+    }
+    const outcome = await matchBankLine(pool, user, lineId, invoiceId);
+    return outcome.ok
+      ? { ok: true, result: { invoiceStatus: outcome.status, dueUsd: outcome.dueUsd } }
       : { ok: false, error: outcome.error };
   }
 
@@ -177,10 +204,19 @@ export function registerAssistantRoutes(
     }
   }));
 
+  app.post('/api/assistant/reviews', requireRoles(...TAX_READERS), asyncHandler(async (req, res) => {
+    const month = parseMonth(req.body?.month);
+    if (!month) return res.status(400).json({ error: 'Choose a month like 2026-10.' });
+    return res.status(201).json(await runReview(pool, currentUser(res), model, month));
+  }));
+
   app.post('/api/assistant/actions/:id/confirm', requireUser, asyncHandler(async (req, res) => {
     const user = currentUser(res);
     const action = await ownAction(pool, req.params.id, user);
     if (!action) return res.status(404).json({ error: 'Proposal not found.' });
+    if (!CONFIRM_ROLES[action.kind].includes(user.role)) {
+      return res.status(403).json({ error: 'Your role cannot confirm this kind of proposal.' });
+    }
     const claimed = await pool.query(
       `UPDATE assistant_actions SET status = 'confirmed', decided_by = $2, decided_at = now()
        WHERE id = $1 AND status = 'proposed'`,

@@ -115,19 +115,23 @@ ${vouchers.join('\n')}
 `;
 }
 
+export async function forexSummary(pool: DbPool, organizationId: string, month: string) {
+  const rows = await forexRows(pool, organizationId, month);
+  const priced = rows.filter((row) => row.gainInr !== null);
+  const gains = priced.reduce((sum, row) => sum + Math.max(0, row.gainInr as number), 0);
+  const losses = priced.reduce((sum, row) => sum + Math.min(0, row.gainInr as number), 0);
+  return {
+    month,
+    rows,
+    missingRateCount: rows.length - priced.length,
+    totals: { gainInr: money(gains), lossInr: money(losses), netInr: money(gains + losses) },
+  };
+}
+
 export function registerForexRoutes(app: Express, pool: DbPool): void {
   app.get('/api/tax/forex', taxReader, asyncHandler(async (req, res) => {
     const month = parseMonth(req.query.month) ?? currentMonth();
-    const rows = await forexRows(pool, currentUser(res).organizationId, month);
-    const priced = rows.filter((row) => row.gainInr !== null);
-    const gains = priced.reduce((sum, row) => sum + Math.max(0, row.gainInr as number), 0);
-    const losses = priced.reduce((sum, row) => sum + Math.min(0, row.gainInr as number), 0);
-    return res.json({
-      month,
-      rows,
-      missingRateCount: rows.length - priced.length,
-      totals: { gainInr: money(gains), lossInr: money(losses), netInr: money(gains + losses) },
-    });
+    return res.json(await forexSummary(pool, currentUser(res).organizationId, month));
   }));
 
   app.get('/api/tax/forex/tally', taxReader, asyncHandler(async (req, res) => {

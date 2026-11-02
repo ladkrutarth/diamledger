@@ -107,26 +107,38 @@ function isDocumentKind(value: unknown): value is DocumentKind {
   return DOCUMENT_KINDS.includes(value as DocumentKind);
 }
 
+export async function exportRegister(pool: DbPool, organizationId: string, month: string) {
+  const rows = await registerRows(
+    pool,
+    organizationId,
+    `to_char(COALESCE(i.invoice_date, i.created_at::date), 'YYYY-MM') = $2`,
+    [organizationId, month],
+  );
+  return {
+    month,
+    closed: await monthIsClosed(pool, organizationId, month),
+    rows,
+    totals: {
+      count: rows.length,
+      taxableUsd: money(rows.reduce((sum, row) => sum + row.taxableUsd, 0)),
+      igstUsd: money(rows.reduce((sum, row) => sum + row.igstUsd, 0)),
+    },
+  };
+}
+
+export async function closeMonth(pool: DbPool, organizationId: string, month: string, userId: string): Promise<void> {
+  await pool.query(
+    `INSERT INTO closed_months (organization_id, month, closed_by)
+     VALUES ($1, $2::date, $3)
+     ON CONFLICT (organization_id, month) DO NOTHING`,
+    [organizationId, `${month}-01`, userId],
+  );
+}
+
 export function registerTaxRoutes(app: Express, pool: DbPool): void {
   app.get('/api/tax/register', taxReader, asyncHandler(async (req, res) => {
     const month = parseMonth(req.query.month) ?? currentMonth();
-    const user = currentUser(res);
-    const rows = await registerRows(
-      pool,
-      user.organizationId,
-      `to_char(COALESCE(i.invoice_date, i.created_at::date), 'YYYY-MM') = $2`,
-      [user.organizationId, month],
-    );
-    return res.json({
-      month,
-      closed: await monthIsClosed(pool, user.organizationId, month),
-      rows,
-      totals: {
-        count: rows.length,
-        taxableUsd: money(rows.reduce((sum, row) => sum + row.taxableUsd, 0)),
-        igstUsd: money(rows.reduce((sum, row) => sum + row.igstUsd, 0)),
-      },
-    });
+    return res.json(await exportRegister(pool, currentUser(res).organizationId, month));
   }));
 
   app.get('/api/tax/gst-pack', taxReader, asyncHandler(async (req, res) => {
@@ -278,12 +290,7 @@ export function registerTaxRoutes(app: Express, pool: DbPool): void {
     const month = parseMonth(req.params.month);
     if (!month) return res.status(400).json({ error: 'Choose a month like 2026-10.' });
     const user = currentUser(res);
-    await pool.query(
-      `INSERT INTO closed_months (organization_id, month, closed_by)
-       VALUES ($1, $2::date, $3)
-       ON CONFLICT (organization_id, month) DO NOTHING`,
-      [user.organizationId, `${month}-01`, user.id],
-    );
+    await closeMonth(pool, user.organizationId, month, user.id);
     return res.json({ month, closed: true });
   }));
 

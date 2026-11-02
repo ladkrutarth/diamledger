@@ -143,6 +143,14 @@ const RULES: LimitRule[] = [
     message: 'Assistant limit reached: 30 questions per hour. Try again later.',
     key: userOrIp,
   },
+  {
+    path: '/api/assistant/reviews',
+    name: 'assistant-review',
+    windowMinutes: 60,
+    limit: 10,
+    message: 'Month review limit reached: 10 reviews per hour. Try again later.',
+    key: userOrIp,
+  },
 ];
 
 export function registerRateLimits(app: Express, pool: DbPool): void {

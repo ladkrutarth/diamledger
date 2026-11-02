@@ -21,7 +21,7 @@ flowchart TB
   express --> guard["Headers, body limits, session cookie, rate limits"]
   guard --> routes["Auth, invoices, payments, company, buyers, dashboard, team, email, health"]
   routes --> db[("PostgreSQL")]
-  routes --> gemini["Gemini, for parcel manifests"]
+  routes --> gemini["Gemini, for parcel manifests and the tax and invoice assistant"]
   routes --> smtp["SMTP, for invoice email and password reset"]
   express -.-> sentry["Sentry, optional"]
   spa -.-> sentry
@@ -79,6 +79,8 @@ Sessions live in the `session` table. Rate-limit counters live in `rate_limits`.
 - Invoice workspace with live A4 preview
 - PDF export
 - AI parcel manifest parsing (Gemini)
+- Tax and invoice assistant (Gemini). It answers from the company's own invoices, payments, and tax desk (deadlines, GSTR-1 filing check, export register, FEMA realization, forex, unmatched bank credits) through read-only tools. Every amount in a reply is checked against the data it looked up; an answer with an amount that is not there is flagged. It can propose a payment, a reminder draft, a bank-line match the matcher already suggests, or, for a chartered accountant, closing a month whose filing check is clean. Nothing changes until the user confirms, and confirming checks the books again first.
+- Month review. For a chosen month, the assistant gathers the filing check, export register, realization, forex, and bank lines, proposes strong bank matches and a month close where they are safe, and summarises the result. The proposals come from code, not the model; if the model's summary is unavailable or mentions an amount that is not in the findings, a summary written from the findings is shown instead.
 - Tally Prime XML and SAP payload generation
 - SMTP email dispatch
 
@@ -150,6 +152,8 @@ In production the demo account is not created. If a database already has it with
   | Send invoice email | 30 per hour per user |
   | Test SMTP settings | 20 per hour per user |
   | AI manifest parsing | 60 per hour per user |
+  | Assistant question | 30 per hour per user |
+  | Assistant month review | 10 per hour per user |
 
 - Invoice email goes to at most 10 addresses, including CC, with up to 2 PDF attachments of 10 MB each. SMTP servers must present a valid TLS certificate unless the sender ticks "Allow invalid certificates". Every send is logged in the `email_dispatches` table.
 - Request bodies are limited to 1 MB, except manifest parsing (15 MB) and invoice email (25 MB). Vercel caps every request at 4.5 MB.
