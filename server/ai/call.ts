@@ -1,11 +1,11 @@
-import type { DbPool } from '../db.js';
-import { reportError } from '../monitoring.js';
+import type { DbPool } from '../core/db.js';
+import { reportError } from '../core/monitoring.js';
 import { AiUnavailableError } from './client.js';
 
 export type TokenUsage = { inputTokens?: number; outputTokens?: number };
 
 export type ModelCallContext = {
-  feature: 'manifest_parser' | 'payment_reminder' | 'assistant' | 'month_review';
+  feature: 'manifest_parser' | 'payment_reminder' | 'assistant' | 'month_review' | 'bank_statement' | 'notice_reply';
   promptVersion: string;
   model: string;
   organizationId: string;

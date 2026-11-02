@@ -23,27 +23,35 @@ import {
   Users,
   CircleUser,
   Landmark,
+  History,
+  Diamond,
+  MessageSquare,
+  Briefcase,
 } from 'lucide-react';
 import { InvoiceState } from './types/invoice';
-import { A1005InvoicePreview } from './components/A1005InvoicePreview';
-import { DataEntryPanel } from './components/DataEntryPanel';
-import { AiManifestParser } from './components/AiManifestParser';
-import { AssistantPanel } from './components/AssistantPanel';
-import { ErpSyncPanel } from './components/ErpSyncPanel';
-import { EmailDispatchPanel } from './components/EmailDispatchPanel';
+import { A1005InvoicePreview } from './features/invoices/A1005InvoicePreview';
+import { DataEntryPanel } from './features/invoices/DataEntryPanel';
+import { AiManifestParser } from './features/invoices/AiManifestParser';
+import { AssistantPanel } from './features/assistant/AssistantPanel';
+import { ErpSyncPanel } from './features/invoices/ErpSyncPanel';
+import { EmailDispatchPanel } from './features/invoices/EmailDispatchPanel';
 import { exportElementToPdf } from './utils/pdfGenerator';
-import { LoginPage } from './components/LoginPage';
-import { PaymentsPanel } from './components/PaymentsPanel';
+import { LoginPage } from './features/auth/LoginPage';
+import { PaymentsPanel } from './features/invoices/PaymentsPanel';
 import { StatusBadge } from './components/StatusBadge';
-import { InvoicesPage } from './components/pages/InvoicesPage';
-import { DashboardPage } from './components/pages/DashboardPage';
-import { RemindersPage } from './components/pages/RemindersPage';
-import { BuyersPage } from './components/pages/BuyersPage';
-import { CompanyPage } from './components/pages/CompanyPage';
-import { TeamPage } from './components/pages/TeamPage';
-import { AccountPage } from './components/pages/AccountPage';
-import { TaxPage } from './components/pages/TaxPage';
-import { InvoiceTaxPanel } from './components/InvoiceTaxPanel';
+import { InvoicesPage } from './features/invoices/InvoicesPage';
+import { DashboardPage } from './features/dashboard/DashboardPage';
+import { RemindersPage } from './features/collections/RemindersPage';
+import { BuyersPage } from './features/buyers/BuyersPage';
+import { CompanyPage } from './features/company/CompanyPage';
+import { TeamPage } from './features/company/TeamPage';
+import { AccountPage } from './features/auth/AccountPage';
+import { TaxPage } from './features/tax/TaxPage';
+import { ActivityPage } from './features/company/ActivityPage';
+import { DiamondsPage } from './features/diamonds/DiamondsPage';
+import { PracticePage } from './features/accountant/PracticePage';
+import { RequestsPage } from './features/accountant/RequestsPage';
+import { InvoiceTaxPanel } from './features/invoices/InvoiceTaxPanel';
 import {
   api,
   errorMessage,
@@ -54,13 +62,16 @@ import {
   type InvoiceRecord,
   type InvoiceStatus,
   type InvoiceSummary,
+  type ShipmentCheck,
   type WorkspaceCompany,
   ROLE_LABEL,
 } from './api/client';
 import { COMPANY_NAME, PRODUCT_NAME, PRODUCT_TAGLINE } from './brand';
 import { applyBuyer, buildNewInvoice, buyerFromConsignee, duplicateInvoice } from './utils/invoiceDefaults';
 
-type View = 'workspace' | 'dashboard' | 'invoices' | 'reminders' | 'buyers' | 'company' | 'team' | 'account' | 'tax';
+type View =
+  | 'workspace' | 'dashboard' | 'invoices' | 'reminders' | 'buyers' | 'company' | 'team' | 'account' | 'tax' | 'activity' | 'diamonds'
+  | 'requests' | 'practice';
 type Module = 'editor' | 'payments' | 'erp' | 'email' | 'tax';
 
 function readResetToken(): string | null {
@@ -92,6 +103,7 @@ export default function App() {
   const isCharteredAccountant = user?.role === 'ca';
   const canWrite = Boolean(user && user.role !== 'ca');
   const canUseTaxDesk = user?.role === 'admin' || user?.role === 'tax' || user?.role === 'ca';
+  const hasClients = companies.some((company) => !company.home);
   const locked = status !== 'draft' || !canWrite;
 
   useEffect(() => {
@@ -215,10 +227,26 @@ export default function App() {
     }
   };
 
+  /** Payment-record and credit-limit warnings for the buyer, shown before issuing. Never blocks issuing. */
+  const creditWarnings = async (): Promise<string[]> => {
+    const buyer = invoice.consignee.companyName.trim();
+    if (!buyer) return [];
+    const amountUsd =
+      invoice.items.reduce((sum, item) => sum + (Number(item.totalAmount) || 0), 0) +
+      (Number(invoice.freightUsd) || 0) + (Number(invoice.insuranceUsd) || 0) + (Number(invoice.otherChargesUsd) || 0);
+    try {
+      const check = await api<ShipmentCheck>(`/api/buyers/risk/check?buyer=${encodeURIComponent(buyer)}&amountUsd=${amountUsd.toFixed(2)}`);
+      return check.warnings;
+    } catch {
+      return [];
+    }
+  };
+
   const changeStatus = async (next: 'issued' | 'cancelled') => {
+    const warnings = next === 'issued' ? await creditWarnings() : [];
     const question =
       next === 'issued'
-        ? 'Issue this invoice? It will be locked and can no longer be edited.'
+        ? `${warnings.length ? `Before you ship:\n- ${warnings.join('\n- ')}\n\n` : ''}Issue this invoice? It will be locked and can no longer be edited.`
         : 'Cancel this invoice? A cancelled invoice cannot be reopened.';
     if (!window.confirm(question)) return;
 
@@ -359,6 +387,10 @@ export default function App() {
         ...(canUseTaxDesk
           ? ([['tax', 'Tax desk', <Landmark className="w-4 h-4" />]] as Array<[View, string, React.ReactNode]>)
           : []),
+        ['requests', 'Requests', <MessageSquare className="w-4 h-4" />],
+        ...(hasClients
+          ? ([['practice', 'Practice', <Briefcase className="w-4 h-4" />]] as Array<[View, string, React.ReactNode]>)
+          : []),
       ],
     },
     {
@@ -366,6 +398,7 @@ export default function App() {
       items: [
         ['workspace', 'Invoice editor', <FileSpreadsheet className="w-4 h-4" />],
         ['buyers', 'Buyers', <Contact className="w-4 h-4" />],
+        ['diamonds', 'Diamonds', <Diamond className="w-4 h-4" />],
       ],
     },
     {
@@ -373,6 +406,9 @@ export default function App() {
       items: [
         ['company', 'Company', <Building2 className="w-4 h-4" />],
         ...(isAdmin ? ([['team', 'Team', <Users className="w-4 h-4" />]] as Array<[View, string, React.ReactNode]>) : []),
+        ...(canUseTaxDesk
+          ? ([['activity', 'Activity', <History className="w-4 h-4" />]] as Array<[View, string, React.ReactNode]>)
+          : []),
         ['account', 'Account', <CircleUser className="w-4 h-4" />],
       ],
     },
@@ -525,7 +561,7 @@ export default function App() {
         />
       )}
       {view === 'reminders' && <RemindersPage key={dataVersion} readOnly={!canWrite} />}
-      {view === 'buyers' && <BuyersPage readOnly={!canWrite} />}
+      {view === 'buyers' && <BuyersPage readOnly={!canWrite} isAdmin={isAdmin} />}
       {view === 'tax' && canUseTaxDesk && (
         <TaxPage
           key={dataVersion}
@@ -545,7 +581,26 @@ export default function App() {
         />
       )}
       {view === 'team' && isAdmin && <TeamPage currentUserId={user.id} />}
+      {view === 'activity' && canUseTaxDesk && <ActivityPage key={dataVersion} onOpen={handleOpenInvoice} />}
+      {view === 'diamonds' && (
+        <DiamondsPage
+          key={dataVersion}
+          canWrite={canWrite}
+          isAdmin={isAdmin}
+          canUseTaxDesk={canUseTaxDesk}
+          onOpen={handleOpenInvoice}
+        />
+      )}
       {view === 'account' && <AccountPage user={user} />}
+      {view === 'requests' && <RequestsPage key={dataVersion} />}
+      {view === 'practice' && hasClients && (
+        <PracticePage
+          onOpenClient={async (id) => {
+            await switchCompany(id);
+            setView('tax');
+          }}
+        />
+      )}
 
       {view === 'workspace' && (
         <>

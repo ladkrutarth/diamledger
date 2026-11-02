@@ -1,13 +1,13 @@
-import type { DbPool } from '../db.js';
-import type { CurrentUser } from '../http.js';
+import type { DbPool } from '../core/db.js';
+import type { CurrentUser } from '../core/http.js';
 import { callModel } from '../ai/call.js';
 import { activeModelName } from '../ai/client.js';
-import { bankLines } from '../bank.js';
-import { filingSummary } from '../filing.js';
-import { forexSummary } from '../forex.js';
-import { realizationSummary } from '../realization.js';
-import { exportRegister } from '../tax.js';
-import { currentMonth } from '../taxShared.js';
+import { bankLines } from '../modules/banking/bank.js';
+import { filingSummary } from '../modules/tax/filing.js';
+import { forexSummary } from '../modules/tax/forex.js';
+import { realizationSummary } from '../modules/tax/realization.js';
+import { exportRegister } from '../modules/tax/tax.js';
+import { currentMonth } from '../modules/tax/taxShared.js';
 import { isGrounded, type AssistantModel } from './agent.js';
 import { bankMatchProposal, CONFIRM_ROLES, monthCloseCheck, saveProposal, type ProposedAction } from './tools.js';
 

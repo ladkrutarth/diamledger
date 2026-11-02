@@ -1,6 +1,6 @@
 import type { Content, FunctionCall, Part } from '@google/genai';
 import type { AssistantModel, ModelReply } from '../assistant/agent.js';
-import type { DraftReminderText } from '../reminders.js';
+import type { DraftReminderText } from '../modules/collections/reminders.js';
 import { AiUnavailableError } from './client.js';
 
 /**

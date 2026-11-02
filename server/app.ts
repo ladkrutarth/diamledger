@@ -1,37 +1,55 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import session from 'express-session';
 import connectPgSimple from 'connect-pg-simple';
-import type { DbPool } from './db.js';
+import type { DbPool } from './core/db.js';
 import { defaultAssistantModel, type AssistantModel } from './assistant/agent.js';
 import { registerAssistantRoutes } from './assistant/routes.js';
-import { loadUser, registerAuthRoutes } from './auth.js';
-import { registerTaxRoutes } from './tax.js';
-import { registerFilingRoutes } from './filing.js';
-import { registerBankRoutes } from './bank.js';
-import { registerRealizationRoutes } from './realization.js';
-import { registerForexRoutes } from './forex.js';
-import { registerWorkspaceRoutes } from './workspace.js';
-import type { CurrentUser } from './http.js';
-import { registerCompanyRoutes } from './company.js';
-import { registerDashboardRoutes } from './dashboard.js';
-import { registerHealthRoute } from './health.js';
-import { reportError } from './monitoring.js';
-import { createSmtpTransport, registerEmailRoutes, type CreateMailTransport } from './emailDispatch.js';
-import { registerInvoiceRoutes } from './invoices.js';
-import { registerLegacyRoutes } from './legacyRoutes.js';
-import { sendPasswordResetEmail, type SendPasswordResetEmail } from './mailer.js';
-import { registerPaymentRoutes } from './payments.js';
-import { registerRateLimits } from './rateLimit.js';
-import { defaultReminderText, registerReminderRoutes, type DraftReminderText } from './reminders.js';
-import { jsonBodyParser, securityHeaders } from './security.js';
-import { registerTeamRoutes } from './team.js';
-import './types.js';
+import { loadUser, registerAuthRoutes } from './modules/auth/auth.js';
+import { registerTaxRoutes } from './modules/tax/tax.js';
+import { registerFilingRoutes } from './modules/tax/filing.js';
+import { registerBankRoutes } from './modules/banking/bank.js';
+import { registerRealizationRoutes } from './modules/tax/realization.js';
+import { registerForexRoutes } from './modules/tax/forex.js';
+import { registerWorkspaceRoutes } from './modules/accountant/workspace.js';
+import type { CurrentUser } from './core/http.js';
+import { registerCompanyRoutes } from './modules/company/company.js';
+import { registerDashboardRoutes } from './modules/invoices/dashboard.js';
+import { registerHealthRoute } from './core/health.js';
+import { reportError } from './core/monitoring.js';
+import { createSmtpTransport, registerEmailRoutes, type CreateMailTransport } from './modules/collections/emailDispatch.js';
+import { registerInvoiceRoutes } from './modules/invoices/invoices.js';
+import { registerLegacyRoutes } from './modules/invoices/legacyRoutes.js';
+import { sendPasswordResetEmail, type SendPasswordResetEmail } from './core/mailer.js';
+import { registerPaymentRoutes } from './modules/invoices/payments.js';
+import { registerRateLimits } from './core/rateLimit.js';
+import { defaultReminderText, registerReminderRoutes, type DraftReminderText } from './modules/collections/reminders.js';
+import { jsonBodyParser, securityHeaders } from './core/security.js';
+import { registerTeamRoutes } from './modules/auth/team.js';
+import { auditTrail, registerAuditRoutes } from './modules/activity/audit.js';
+import { registerExportReportRoutes } from './modules/tax/exportReports.js';
+import { registerParcelRoutes } from './modules/stock/parcels.js';
+import { registerPortalRoutes } from './modules/invoices/portal.js';
+import { registerRateRoutes } from './modules/tax/rates.js';
+import { registerStatementReaderRoutes } from './modules/banking/statementReader.js';
+import { registerAuditCheckRoutes } from './modules/tax/auditChecks.js';
+import { registerAuditPackRoutes } from './modules/tax/auditPack.js';
+import { registerBuyerRiskRoutes } from './modules/company/buyerRisk.js';
+import { registerClientRequestRoutes } from './modules/accountant/clientRequests.js';
+import { registerForeignPaymentRoutes } from './modules/tax/foreignPayments.js';
+import { defaultNoticeReply, registerNoticeRoutes, type DraftNoticeReply } from './modules/tax/notices.js';
+import { registerPracticeRoutes } from './modules/accountant/practice.js';
+import { registerPurchaseRoutes } from './modules/tax/purchases.js';
+import { registerStockRoutes } from './modules/stock/stock.js';
+import { registerTallySyncRoutes } from './modules/banking/tallySync.js';
+import './core/types.js';
 
 export type AppOptions = {
   sendPasswordResetEmail?: SendPasswordResetEmail;
   createMailTransport?: CreateMailTransport;
   draftReminderText?: DraftReminderText;
   assistantModel?: AssistantModel;
+  fetchRates?: typeof fetch;
+  draftNoticeReply?: DraftNoticeReply;
 };
 
 const PgSession = connectPgSimple(session);
@@ -48,11 +66,15 @@ function charteredAccountantGuard(req: Request, res: Response, next: NextFunctio
     path === '/api/auth/change-password' ||
     path === '/api/workspace/switch' ||
     path.startsWith('/api/assistant/') ||
+    path.startsWith('/api/practice/') ||
+    path === '/api/requests' ||
+    /^\/api\/requests\/[0-9a-f-]{36}\/(messages|status)$/.test(path) ||
+    (path.startsWith('/api/notices') && req.method !== 'DELETE') ||
     /^\/api\/invoices\/[0-9a-f-]{36}\/review$/.test(path) ||
     /^\/api\/tax\/months\/\d{4}-\d{2}\/(close|open)$/.test(path);
   if (!allowed) {
     res.status(403).json({
-      error: 'A chartered accountant account can review invoices, close months, and use the assistant. It cannot change invoices, payments, buyers, or the team.',
+      error: 'A chartered accountant account can review invoices, close months, raise requests, track notices, and use the assistant. It cannot change invoices, payments, buyers, or the team.',
     });
     return;
   }
@@ -102,12 +124,29 @@ export function createApp(pool: DbPool, options: AppOptions = {}): Express {
   app.use(loadUser(pool));
   app.use(charteredAccountantGuard);
   registerRateLimits(app, pool);
+  app.use(auditTrail(pool));
 
   registerAuthRoutes(app, pool, options.sendPasswordResetEmail ?? sendPasswordResetEmail);
   registerInvoiceRoutes(app, pool);
   registerTaxRoutes(app, pool);
   registerFilingRoutes(app, pool);
   registerBankRoutes(app, pool);
+  registerStatementReaderRoutes(app, pool);
+  registerRateRoutes(app, pool, options.fetchRates ?? fetch);
+  registerAuditRoutes(app, pool);
+  registerExportReportRoutes(app, pool);
+  registerParcelRoutes(app, pool);
+  registerPortalRoutes(app, pool);
+  registerPurchaseRoutes(app, pool);
+  registerStockRoutes(app, pool);
+  registerAuditCheckRoutes(app, pool);
+  registerAuditPackRoutes(app, pool);
+  registerForeignPaymentRoutes(app, pool);
+  registerTallySyncRoutes(app, pool);
+  registerClientRequestRoutes(app, pool);
+  registerNoticeRoutes(app, pool, options.draftNoticeReply ?? defaultNoticeReply);
+  registerPracticeRoutes(app, pool);
+  registerBuyerRiskRoutes(app, pool);
   registerRealizationRoutes(app, pool);
   registerForexRoutes(app, pool);
   registerWorkspaceRoutes(app, pool);

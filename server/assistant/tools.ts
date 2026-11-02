@@ -1,15 +1,15 @@
 import { z } from 'zod';
-import type { DbPool } from '../db.js';
-import type { CurrentUser, Role } from '../http.js';
-import { bankLines, currentSuggestion } from '../bank.js';
-import { parseMonth } from '../closedMonths.js';
-import { filingSummary } from '../filing.js';
-import { forexSummary } from '../forex.js';
-import { realizationSummary } from '../realization.js';
-import { DUE_DATE, listOverdue } from '../reminders.js';
-import { exportRegister } from '../tax.js';
-import { currentMonth, monthIsClosed } from '../taxShared.js';
-import { complianceItems } from '../workspace.js';
+import type { DbPool } from '../core/db.js';
+import type { CurrentUser, Role } from '../core/http.js';
+import { bankLines, currentSuggestion } from '../modules/banking/bank.js';
+import { parseMonth } from '../modules/tax/closedMonths.js';
+import { filingSummary } from '../modules/tax/filing.js';
+import { forexSummary } from '../modules/tax/forex.js';
+import { realizationSummary } from '../modules/tax/realization.js';
+import { DUE_DATE, listOverdue } from '../modules/collections/reminders.js';
+import { exportRegister } from '../modules/tax/tax.js';
+import { currentMonth, monthIsClosed } from '../modules/tax/taxShared.js';
+import { complianceItems } from '../modules/accountant/workspace.js';
 
 export type ToolContext = { pool: DbPool; user: CurrentUser; sessionId: string };
 
