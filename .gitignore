@@ -7,3 +7,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Python API
+backend/.venv/
+__pycache__/
+.pytest_cache/

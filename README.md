@@ -93,7 +93,7 @@ Fifteen desks in five groups, chosen from a side menu. Desks not on the company'
 
 ## Architecture
 
-The browser runs a React app. Every signed-in screen calls one Express API, which keeps all data for a company in PostgreSQL. PDF, Tally XML, and SAP files are built in the browser. AI calls, email, and file imports run on the server.
+The browser runs a React app. Every signed-in screen calls one Python API (FastAPI), which keeps all data for a company in PostgreSQL. PDF, Tally XML, and SAP files are built in the browser. AI calls, email, and file imports run on the server.
 
 ```mermaid
 flowchart TB
@@ -107,18 +107,18 @@ flowchart TB
 
   spa -- "/api, session cookie" --> entry
 
-  subgraph Server["Express API (server/)"]
+  subgraph Server["Python API (backend/diamondx/)"]
     entry{"Entry point"}
-    entry --> local["server/main.ts<br/>local and Docker"]
-    entry --> vercel["api/index.ts → vercelHandler.ts<br/>Vercel function"]
+    entry --> local["main.py (uvicorn)<br/>local and Docker"]
+    entry --> vercel["api/index.py → serverless.py<br/>Vercel function"]
     local --> app
     vercel --> app
-    app["app.ts: middleware and routes"]
-    app --> core["core/: db, http guards, security,<br/>rate limits, monitoring"]
+    app["app.py: middleware and routes"]
+    app --> core["core/: db, sessions, request pipeline,<br/>security, rate limits, monitoring"]
     app --> modules["modules/: auth, invoices, company,<br/>collections, stock, banking, tax,<br/>accountant, activity"]
     app --> assistant["assistant/: agent, read-only tools, month review"]
     app --> billing["modules/billing: plans, payment methods,<br/>subscription guard"]
-    modules --> ai["ai/: callModel with budget,<br/>timeout, and usage log"]
+    modules --> ai["ai/: call_model with budget,<br/>timeout, and usage log"]
     assistant --> ai
   end
 
@@ -158,57 +158,61 @@ flowchart LR
 
 - **Company scope.** Every query filters by the signed-in user's active company.
 - **Closed months.** Changes to invoices, payments, purchases, and payments abroad dated in a closed month are refused with `409`.
-- **Two entry points, one app.** On Vercel, `vercel.json` sends every `/api` request to `api/index.ts`, which builds the same Express app once per instance. Locally, `server/main.ts` also serves the Vite dev server; in Docker it serves the built files from `dist/`.
+- **Two entry points, one app.** On Vercel, `vercel.json` sends every `/api` request to `api/index.py`, which builds the same FastAPI app once per instance (`serverless.py`). Locally, `npm run dev` runs the API and the Vite dev server side by side; in Docker the API also serves the built files from `dist/`.
 
 ---
 
 ## Project structure
 
-Code is grouped by feature. Each server module owns its routes, SQL, and rules; each frontend feature owns its pages. Shared pieces live in `core/` (server) and `components/` (browser).
+Code is grouped by feature. Each API module owns its routes, SQL, and rules; each frontend feature owns its pages. Shared pieces live in `core/` (API) and `components/` (browser).
 
 ```text
 .
 ├── api/
-│   └── index.ts                 Vercel serverless entry
+│   └── index.py                 Vercel serverless entry
 ├── db/
 │   ├── init/                    Creates the test database in Docker
 │   └── migrations/              Numbered SQL, applied once, in order
 │
-├── server/                      Express API
-│   ├── main.ts                  Local and Docker entry: env, migrate, serve
-│   ├── app.ts                   Middleware order and route registration
-│   ├── vercelHandler.ts         Adapter used by api/index.ts
-│   │
-│   ├── core/                    Shared by every module
-│   │   ├── db.ts                Pool, migrations
-│   │   ├── http.ts              Roles, guards, current user
-│   │   ├── formInput.ts         Request body readers, document-number matching
-│   │   ├── security.ts          Headers, CSP, body limits
-│   │   ├── rateLimit.ts         Limits stored in PostgreSQL
-│   │   ├── monitoring.ts        Sentry
-│   │   ├── health.ts            /api/health
-│   │   ├── mailer.ts            Password reset mail
-│   │   ├── migrate.ts           npm run migrate
-│   │   ├── seed.ts, demoData.ts Demo account and sample data
-│   │   └── types.ts, zip.ts
-│   │
-│   ├── modules/                 One folder per business area
-│   │   ├── auth/                Sign in, password reset, team members
-│   │   ├── company/             Company profile, buyers, buyer credit risk
-│   │   ├── invoices/            Invoices, payments, dashboard, buyer portal
-│   │   ├── collections/         Overdue reminders, invoice email
-│   │   ├── stock/               Parcels, stock register
-│   │   ├── banking/             Bank statements, AI statement reader, Tally sync
-│   │   ├── tax/                 Filing, register, purchases & ITC, realization,
-│   │   │                        forex, rates, refunds, TDS, audit checks,
-│   │   │                        3CD pack, notices, closed months
-│   │   ├── accountant/          Multi-company workspace, requests, practice
-│   │   ├── billing/             Plans, Razorpay, bank transfer, PayPal, subscription guard
-│   │   └── activity/            Activity log
-│   │
-│   ├── assistant/               Tool-calling agent, read-only tools, month review
-│   ├── ai/                      Provider choice and callModel (budget, timeout, log)
-│   └── tests/                   API tests against a temporary PostgreSQL
+├── backend/                     Python API (FastAPI), package diamondx
+│   ├── pyproject.toml, uv.lock  Dependencies (uv)
+│   ├── diamondx/
+│   │   ├── main.py              Local and Docker entry: env, migrate, seed, serve
+│   │   ├── app.py               Middleware order and route registration
+│   │   ├── serverless.py        Adapter used by api/index.py
+│   │   │
+│   │   ├── core/                Shared by every module
+│   │   │   ├── db.py            Pool, migrations
+│   │   │   ├── context.py       Request pipeline: session, user, CA and plan guards, rate limit, activity log
+│   │   │   ├── sessions.py      Cookie sessions in PostgreSQL
+│   │   │   ├── http.py          Roles, guards, current user, ApiError
+│   │   │   ├── form_input.py    Request body readers, document-number matching, dates
+│   │   │   ├── numbers.py       Rounding and formatting that match JavaScript
+│   │   │   ├── security.py      Headers, CSP, body limits
+│   │   │   ├── rate_limit.py    Limits stored in PostgreSQL
+│   │   │   ├── monitoring.py    Sentry
+│   │   │   ├── health.py        /api/health
+│   │   │   ├── mailer.py        Password reset mail
+│   │   │   ├── migrate.py       npm run migrate
+│   │   │   └── seed.py, demo_data.py  Demo account and sample data
+│   │   │
+│   │   ├── modules/             One folder per business area
+│   │   │   ├── auth/            Sign in, password reset, team members
+│   │   │   ├── company/         Company profile, buyers, buyer credit risk
+│   │   │   ├── invoices/        Invoices (schema.py), payments, dashboard, buyer portal, manifest reading
+│   │   │   ├── collections/     Overdue reminders, invoice email
+│   │   │   ├── stock/           Parcels, stock register
+│   │   │   ├── banking/         Bank statements, AI statement reader, Tally sync
+│   │   │   ├── tax/             Filing, register, purchases & ITC, realization,
+│   │   │   │                    forex, rates, refunds, TDS, audit checks,
+│   │   │   │                    3CD pack, notices, closed months
+│   │   │   ├── accountant/      Multi-company workspace, requests, practice
+│   │   │   ├── billing/         Plans, Razorpay, bank transfer, PayPal, subscription guard
+│   │   │   └── activity/        Activity log
+│   │   │
+│   │   ├── assistant/           Tool-calling agent, read-only tools, month review, grounding check
+│   │   └── ai/                  Provider choice and call_model (budget, timeout, log)
+│   └── tests/                   API tests (pytest) against a temporary PostgreSQL
 │
 ├── src/                         React app
 │   ├── main.tsx, App.tsx        Start-up, sign-in, navigation shell
@@ -219,9 +223,10 @@ Code is grouped by feature. Each server module owns its routes, SQL, and rules; 
 │   │   ├── auth/  company/  buyers/  invoices/  collections/
 │   │   ├── dashboard/  diamonds/  tax/  accountant/  assistant/  billing/
 │   ├── utils/                   PDF, Tally XML, SAP, amount in words
-│   ├── types/, data/            Invoice types and sample invoices
+│   ├── types/, data/            Invoice types and sample invoices (sampleInvoices.json, shared with the API)
 │   └── monitoring.ts            Browser Sentry
 │
+├── requirements.txt             Python packages for Vercel and Docker (from backend/pyproject.toml)
 ├── Dockerfile, docker-compose.yml
 ├── vercel.json                  Rewrites, headers, cron, function settings
 └── vite.config.ts, vitest.config.ts, tsconfig.json
@@ -229,18 +234,18 @@ Code is grouped by feature. Each server module owns its routes, SQL, and rules; 
 
 ### Where each area lives
 
-| Area | Server module | Screens | Main routes |
+| Area | API module (`backend/diamondx/`) | Screens | Main routes |
 | --- | --- | --- | --- |
-| Accounts and team | `modules/auth` | `features/auth`, `features/company` | `/api/auth/*`, `/api/team/*` |
-| Company and buyers | `modules/company` | `features/company`, `features/buyers` | `/api/company`, `/api/buyers/*` |
-| Invoices and payments | `modules/invoices` | `features/invoices`, `features/dashboard` | `/api/invoices/*`, `/api/dashboard`, `/api/portal/*` |
-| Collections | `modules/collections` | `features/collections` | `/api/reminders/*`, `/api/send-email` |
-| Stock | `modules/stock` | `features/diamonds` | `/api/parcels/*`, `/api/stock/*` |
-| Banking and Tally | `modules/banking` | `features/tax` | `/api/bank/*`, `/api/tally/*` |
-| Tax desk | `modules/tax` | `features/tax` | `/api/tax/*`, `/api/purchases/*`, `/api/foreign-payments/*`, `/api/notices/*`, `/api/rates/*` |
-| Accountant | `modules/accountant` | `features/accountant` | `/api/workspace/*`, `/api/requests/*`, `/api/practice/*` |
-| Activity | `modules/activity` | `features/company` | `/api/audit` |
-| Plan & billing | `modules/billing` | `features/billing` | `/api/billing/*` |
+| Accounts and team | `modules/auth/` | `features/auth`, `features/company` | `/api/auth/*`, `/api/team/*` |
+| Company and buyers | `modules/company/` | `features/company`, `features/buyers` | `/api/company`, `/api/buyers/*` |
+| Invoices and payments | `modules/invoices/` | `features/invoices`, `features/dashboard` | `/api/invoices/*`, `/api/dashboard`, `/api/portal/*` |
+| Collections | `modules/collections/` | `features/collections` | `/api/reminders/*`, `/api/send-email` |
+| Stock | `modules/stock/` | `features/diamonds` | `/api/parcels/*`, `/api/stock/*` |
+| Banking and Tally | `modules/banking/` | `features/tax` | `/api/bank/*`, `/api/tally/*` |
+| Tax desk | `modules/tax/` | `features/tax` | `/api/tax/*`, `/api/purchases/*`, `/api/foreign-payments/*`, `/api/notices/*`, `/api/rates/*` |
+| Accountant | `modules/accountant/` | `features/accountant` | `/api/workspace/*`, `/api/requests/*`, `/api/practice/*` |
+| Activity | `modules/activity/` | `features/company` | `/api/audit` |
+| Plan & billing | `modules/billing/` | `features/billing` | `/api/billing/*` |
 | Assistant | `assistant/` | `features/assistant` | `/api/assistant/*` |
 
 ## Data model
@@ -304,7 +309,7 @@ erDiagram
 
 ## AI
 
-All AI features use one provider, chosen by `AI_PROVIDER`. Every call goes through `callModel` in `server/ai/call.ts`, which checks AI is on, enforces a daily token budget per company, times out slow calls, retries once, and logs each call to `ai_calls`.
+All AI features use one provider, chosen by `AI_PROVIDER`. Every call goes through `call_model` in `backend/diamondx/ai/call.py`, which checks AI is on, enforces a daily token budget per company, times out slow calls, retries once, and logs each call to `ai_calls`.
 
 | Feature | Model's job | When the model fails or is unsure |
 | --- | --- | --- |
@@ -365,13 +370,13 @@ flowchart LR
 | `gemini` (default) | `GEMINI_API_KEY` | Gemini |
 | `huggingface` | `HF_TOKEN` | `HF_MODEL`, default `meta-llama/Llama-3.3-70B-Instruct` |
 
-For Hugging Face, create a token at https://huggingface.co/settings/tokens with "Make calls to Inference Providers", and pick a chat model that supports tool calling. Reading manifest images needs Gemini; with Hugging Face, paste the text. Restart the server after changing `.env`.
+For Hugging Face, create a token at https://huggingface.co/settings/tokens with "Make calls to Inference Providers", and pick a chat model that supports tool calling. Reading manifest images needs Gemini; with Hugging Face, paste the text. Restart the API after changing `.env`. Gemini is called over its REST API with httpx; there is no SDK to install.
 
 ---
 
 ## Run locally
 
-Requirements: Node.js 22 and Docker (for PostgreSQL).
+Requirements: Node.js 22 (for the frontend), [uv](https://docs.astral.sh/uv/) (installs Python 3.12 and the API's packages), and Docker (for PostgreSQL).
 
 ```bash
 docker compose up postgres -d
@@ -380,10 +385,10 @@ cp .env.example .env
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) and sign in with the demo account `owner@example.com` / `password123`, or create an account.
+`npm run dev` starts the API on port 8000 and Vite on port 3000, which sends `/api` to the API. Open [http://localhost:3000](http://localhost:3000) and sign in with the demo account `owner@example.com` / `password123`, or create an account. In development the API documentation is at [http://localhost:8000/api/docs](http://localhost:8000/api/docs).
 
 - Set `GEMINI_API_KEY` (or the Hugging Face variables) before using AI features.
-- Without SMTP settings, password reset links are printed to the server log.
+- Without SMTP settings, password reset links are printed to the API log.
 
 ---
 
@@ -407,6 +412,8 @@ Open [http://localhost:3000](http://localhost:3000) and sign in with the demo ac
 | `BILLING_BANK_ACCOUNT_NAME`, `BILLING_BANK_NAME`, `BILLING_BANK_ACCOUNT_NUMBER`, `BILLING_BANK_IFSC`, `BILLING_BANK_BRANCH`, `BILLING_BANK_ACCOUNT_TYPE`, `BILLING_GSTIN` | | The account plan payments by bank transfer go to. On when the number and IFSC are set |
 | `PLATFORM_ADMIN_EMAILS` | | Comma-separated emails of the people who approve bank transfers |
 | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_ENV` | | PayPal for companies outside India; `PAYPAL_ENV` is `sandbox` (default) or `live` |
+| `APP_ENV` | | `production` turns on CSP and HSTS, hides `/api/docs`, and serves `dist/`. `NODE_ENV` is read if it is not set |
+| `PORT` | | Port the API listens on, default 3000 (`npm run dev` uses 8000) |
 | `MIGRATE_ON_START` | | `false` skips migrations at start-up |
 | `SEED_DEMO_USER` | | `true` creates the demo account in production |
 | `VITE_SHOW_DEMO_LOGIN` | | `true` shows demo credentials on the sign-in page. Build time |
@@ -450,7 +457,7 @@ The site is a static frontend plus one serverless function.
 2. Add any other variables from [Configuration](#configuration).
 3. Redeploy. Pending migrations run the first time a new deployment connects.
 
-`vercel.json` rewrites `/api/*` to `api/index.ts`, ships `db/**` with the function for migrations, sets the security headers for static files, and calls `/api/cron/rates` daily.
+`vercel.json` rewrites `/api/*` to the Python function `api/index.py` (packages from `requirements.txt`), ships `db/**`, the API code, and the sample invoices with it, sets the security headers for static files, and calls `/api/cron/rates` daily.
 
 ### Docker
 
@@ -458,15 +465,15 @@ The site is a static frontend plus one serverless function.
 docker compose up --build
 ```
 
-PostgreSQL and the app start together on port 3000. The image compiles the server to `dist-server/`, installs only production packages, runs as the unprivileged `node` user, and uses `/api/health` as its health check. Set `SESSION_SECRET` for anything beyond a local demo, and `SEED_DEMO_USER=true` for the demo account.
+PostgreSQL and the app start together on port 3000. The image builds the frontend with Node, then runs the Python API (which also serves `dist/`) on `python:3.12-slim` as an unprivileged user, with `/api/health` as its health check. Set `SESSION_SECRET` for anything beyond a local demo, and `SEED_DEMO_USER=true` for the demo account.
 
 ---
 
 ## Security
 
 - **Sessions** are stored in PostgreSQL; cookies are signed with `SESSION_SECRET`.
-- **Headers:** Content Security Policy, HSTS, and anti-framing. The same CSP is in `server/core/security.ts` and `vercel.json`; a test keeps them in sync.
-- **Validation:** invoices are checked with zod plus business rules (line total = carats × rate, USD only). Other forms use `core/formInput.ts`.
+- **Headers:** Content Security Policy, HSTS, and anti-framing. The same CSP is in `backend/diamondx/core/security.py` and `vercel.json`; a test keeps them in sync.
+- **Validation:** invoices are checked with Pydantic plus business rules (line total = carats × rate, USD only) in `modules/invoices/schema.py`. Other forms use `core/form_input.py`.
 - **Uploads:** request files accept PDF, images, CSV, and Excel up to 2 MB; downloads are sent as attachments with `nosniff`.
 - **Email:** at most 10 recipients and 2 PDF attachments of 10 MB each. SMTP must present a valid certificate unless the sender allows otherwise.
 
@@ -514,22 +521,24 @@ Counters are stored in PostgreSQL, so limits hold across serverless instances. T
 ## Tests and CI
 
 ```bash
-npm test                                   # everything
-npx vitest run server/tests/tax.test.ts    # one file
-npx vitest run -t "stock register"         # tests whose name matches
+npm run test:api                                        # API tests (pytest)
+cd backend && uv run pytest tests/test_tax.py            # one file
+cd backend && uv run pytest -k "stock_register"          # tests whose name matches
+npm test                                                 # frontend tests (vitest)
 ```
 
-Server tests start a temporary PostgreSQL (`embedded-postgres`) and drive the real app through `supertest`. They cover:
+API tests start a temporary PostgreSQL (the `embedded-postgres` binaries from `npm install`, or any folder of PostgreSQL binaries in `PG_BIN`) unless `TEST_DATABASE_URL` is set, and drive the real app with httpx. Outside services are fakes passed in through `AppOptions`: mail, the AI model and drafters, Razorpay, PayPal, and the rate feed. They cover:
 
-- accounts, roles, the CA guard, and password reset
+- accounts, roles, the CA guard, sessions, and password reset
 - invoices, numbering, payments, search, and closed months
 - the tax desk: filing, register, realization, forex, bank matching
 - purchases and GSTR-2B, stock register, payments abroad, audit checks, 3CD pack, Tally reconciliation, requests, notices, practice, and buyer risk
-- the assistant and month review, with a fake model
-- rate limits, email safety, security headers, and migrations
+- plans, Razorpay checkout and webhooks, bank transfer, and PayPal
+- the assistant and month review, with a scripted model; real-model evals run with `RUN_AI_EVALS=1`
+- rate limits, email safety, security headers, migrations, and the Vercel entry
 - in the browser code: Tally XML, SAP payloads, amounts in words, and the login form
 
-GitHub Actions (`.github/workflows/ci.yml`) runs the type check, the tests against a PostgreSQL 16 service, and the build on every push to `main` and every pull request
+GitHub Actions (`.github/workflows/ci.yml`) runs two jobs on every push to `main` and every pull request: the frontend type check, tests, and build; and the API tests against a PostgreSQL 16 service
 
 ### Ways to pay
 
@@ -587,17 +596,18 @@ Not covered yet: emailing the operator when a bank transfer is waiting, GST tax 
 ## Adding a feature
 
 1. **Schema:** add `db/migrations/NNN_name.sql` with the next number.
-2. **Server:** add a file under the right `server/modules/<area>/` that exports `registerXRoutes(app, pool)`, and register it in `server/app.ts`.
-   - Filter every query by `currentUser(res).organizationId`.
-   - Guard routes with `requireUser`, `requireAdmin`, `requireRoles`, or the tax guards in `modules/tax/taxShared.ts`.
-   - Read bodies with `formReader` from `core/formInput.ts`.
-   - Refuse changes dated in a closed month (`closedMonthMessage`).
-   - If a CA must write to it, add the path to the allowlist in `charteredAccountantGuard`.
-   - Add a rule to `modules/activity/audit.ts` so the change shows in Activity.
-   - Route any AI call through `callModel`, and add its feature name to `ModelCallContext`.
-   - If it belongs to a paid tier, add its path to `featureForPath` in `modules/billing/plans.ts`.
+2. **API:** add a file under the right `backend/diamondx/modules/<area>/` with a `build_router()` that creates its router with `api_router()` from `core/context.py`, and add the module to the list in `create_app` (`app.py`).
+   - Filter every query by `user.organization_id`.
+   - Guard routes with `Depends(require_user)`, `require_admin`, `require_roles(...)`, or the tax guards in `modules/tax/shared.py`.
+   - Read bodies with `body(request)` or `form_reader(...)` from `core/form_input.py`; raise `ApiError(status, message)` for anything the user must fix.
+   - Refuse changes dated in a closed month (`closed_month_message`).
+   - If a CA must write to it, add the path to the allowlist in `core/context.py`.
+   - Add a rule to `modules/activity/audit.py` so the change shows in Activity.
+   - Route any AI call through `call_model`, and add its feature name to `Feature` in `ai/call.py`.
+   - If it belongs to a paid tier, add its path to `feature_for_path` in `modules/billing/plans.py`.
+   - Keep responses as the browser expects them: camelCase keys, `iso()` for timestamps, and the rounding helpers in `core/numbers.py` for money.
 3. **Browser:** add response types to `src/api/client.ts`, a screen under `src/features/<area>/`, and a navigation entry in `App.tsx` or a desk in `TaxPage.tsx`.
-4. **Tests:** add API tests under `server/tests/`, and run `npm run lint && npm test`.
+4. **Tests:** add API tests under `backend/tests/`, and run `npm run lint && npm test && npm run test:api`.
 
 ---
 
@@ -605,12 +615,13 @@ Not covered yet: emailing the operator when a bank transfer is waiting, GST tax 
 
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Start the app with live reload (`server/main.ts`) |
+| `npm run dev` | Start the API (port 8000) and Vite (port 3000) with live reload |
+| `npm run dev:api` / `npm run dev:web` | Start only the API, or only Vite |
 | `npm run build` | Build the frontend to `dist/` |
-| `npm run build:server` | Compile the server to `dist-server/` |
-| `npm start` | Run the compiled server. Build both first and set `NODE_ENV=production` |
+| `npm start` | Run the API in production mode, serving `dist/`. Build first |
 | `npm run migrate` | Apply pending migrations |
 | `npm run seed:demo` | Create the demo account. Add `-- --reset` to wipe and reload its sample data |
-| `npm run lint` | Type-check the project |
-| `npm test` | Run all tests |
-| `npm run clean` | Remove `dist/` and `dist-server/` |
+| `npm run lint` | Type-check the frontend |
+| `npm test` | Run the frontend tests |
+| `npm run test:api` | Run the API tests |
+| `npm run clean` | Remove `dist/` |

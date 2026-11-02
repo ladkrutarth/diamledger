@@ -4,16 +4,18 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server/main.ts",
-    "start": "node dist-server/main.js",
+    "dev": "sh -c 'npm run dev:api & npm run dev:web; wait'",
+    "dev:api": "cd backend && PORT=${API_PORT:-8000} uv run python -m diamondx.main",
+    "dev:web": "API_PROXY_TARGET=${API_PROXY_TARGET:-http://localhost:8000} vite --port 3000",
+    "start": "cd backend && APP_ENV=production uv run python -m diamondx.main",
     "build": "vite build",
-    "build:server": "esbuild server/main.ts server/core/migrate.ts --bundle --platform=node --target=node22 --format=esm --packages=external --outdir=dist-server",
-    "migrate": "tsx server/core/migrate.ts",
-    "seed:demo": "tsx server/core/seed.ts",
+    "migrate": "cd backend && uv run python -m diamondx.core.migrate",
+    "seed:demo": "cd backend && uv run python -m diamondx.core.seed",
     "preview": "vite preview",
     "clean": "rm -rf dist dist-server",
     "lint": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run src",
+    "test:api": "cd backend && uv run pytest"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

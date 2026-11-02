@@ -10,7 +10,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type check
+        run: npm run lint
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  api:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -40,13 +62,17 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Only for the test that checks session cookies against express-session's signing.
       - run: npm ci
 
-      - name: Type check
-        run: npm run lint
+      - uses: astral-sh/setup-uv@v6
 
-      - name: Tests
-        run: npm test
+      - name: API tests
+        working-directory: backend
+        run: uv run pytest
 
-      - name: Build
-        run: npm run build
+      - name: Requirements match pyproject
+        working-directory: backend
+        run: |
+          uv export --no-dev --no-hashes --no-emit-project --format requirements-txt | grep -v '^#\|^ *#\|^-e' > /tmp/req.txt
+          diff <(grep -v '^#' ../requirements.txt) /tmp/req.txt

@@ -1,29 +1,31 @@
-FROM node:22-alpine AS build
+# Frontend: built once with Node, then served as static files by the Python API.
+FROM node:22-alpine AS web
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-RUN npm run build && npm run build:server
+RUN npm run build
 
-FROM node:22-alpine AS prod-deps
+# API: FastAPI on uvicorn. It also serves dist/ with a single-page-app fallback.
+FROM python:3.12-slim AS runner
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+ENV APP_ENV=production \
+    PORT=3000 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/backend
 
-FROM node:22-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-ENV PORT=3000
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt && useradd --create-home --uid 10001 app
 
-COPY --chown=node:node package.json ./
-COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
-COPY --from=build --chown=node:node /app/dist ./dist
-COPY --from=build --chown=node:node /app/dist-server ./dist-server
-COPY --chown=node:node db ./db
+COPY --chown=app:app backend/diamondx ./backend/diamondx
+COPY --chown=app:app db ./db
+COPY --chown=app:app src/data/sampleInvoices.json ./src/data/sampleInvoices.json
+COPY --from=web --chown=app:app /app/dist ./dist
 
-USER node
+USER app
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:3000/api/health', timeout=4).status == 200 else 1)"
 
-CMD ["node", "dist-server/main.js"]
+CMD ["python", "-m", "diamondx.main"]
