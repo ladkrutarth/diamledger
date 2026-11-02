@@ -350,7 +350,8 @@ def build_router():
         try:
             settings = parse_smtp_settings(body(request))
         except InputError as error:
-            return JSONResponse({"success": False, "error": str(error)}, status_code=400)
+            log.warning("Invalid SMTP settings payload received", exc_info=error)
+            return JSONResponse({"success": False, "error": "Invalid SMTP settings payload."}, status_code=400)
         if not settings:
             return JSONResponse({"success": False, "error": "Host, Username, and Password are required."}, status_code=400)
         try:
