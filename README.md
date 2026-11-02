@@ -554,33 +554,7 @@ Server tests start a temporary PostgreSQL (`embedded-postgres`) and drive the re
 - rate limits, email safety, security headers, and migrations
 - in the browser code: Tally XML, SAP payloads, amounts in words, and the login form
 
-GitHub Actions (`.github/workflows/ci.yml`) runs the type check, the tests against a PostgreSQL 16 service, and the build on every push to `main` and every pull request.
-
----
-
-## Plans and pricing
-
-Prices are per company, in Indian rupees, and exclude GST. 18% GST is added at checkout. Yearly billing costs 10 months (two months free). They are set in [`server/modules/billing/plans.ts`](server/modules/billing/plans.ts); change them there and the app, the checkout, and Razorpay follow.
-
-| Plan | For | Monthly | Yearly | With GST (month / year) | Users | Issued invoices a month | Adds |
-| --- | --- | ---: | ---: | ---: | :---: | :---: | --- |
-| **Starter** | A small exporter | ₹1,499 | ₹14,990 | ₹1,769 / ₹17,688 | 2 | 30 | Invoicing, PDF, Tally/SAP, payments, collections, filing check, register, realization, forex, bank match, stock and KP |
-| **Growth** | An exporter with an accountant | ₹3,999 | ₹39,990 | ₹4,719 / ₹47,188 | 5 | 150 | Purchases & GSTR-2B, TDS on payments abroad, Tally match, notices, AI, outside CA access |
-| **Business** | Preparing for tax audit | ₹7,999 | ₹79,990 | ₹9,439 / ₹94,388 | 15 | Unlimited | Audit checks and the Form 3CD pack |
-| **CA Firm** | A CA firm serving exporters | ₹2,499 | ₹24,990 | ₹2,949 / ₹29,488 | 5 | 30 | Practice view for up to 25 client companies |
-
-A CA works inside each client's company on the client's plan. The CA Firm plan covers the firm's own practice view across clients.
-
-### Why these prices
-
-| Product (India) | Price seen | What it covers |
-| --- | --- | --- |
-| Zoho Books | ₹899–₹9,999 a month, about 17% off yearly | General GST accounting |
-| TallyPrime | Silver ₹22,500 once or about ₹750 a month rental; Gold ₹67,500 | Accounting, single or multi-user |
-| Jewellery ERPs (Karat, SwarnApp, RPS, Globe) | About ₹25,000–₹40,000 a year | Jewellery billing and stock |
-| CA practice tools (CADashboard, Cone, Hisabkitab) | About ₹5,000–₹55,000 a year | Client and task tracking |
-
-Starter sits near a jewellery ERP. Growth and Business are priced above general accounting because they replace accountant hours on export compliance: GSTR-2B credit matching, FEMA realization, e-BRC, TDS on foreign payments, notices, and audit preparation. CA Firm sits in the middle of practice tools. Prices were checked in November 2026 from public listings and resellers; review them before launch.
+GitHub Actions (`.github/workflows/ci.yml`) runs the type check, the tests against a PostgreSQL 16 service, and the build on every push to `main` and every pull request
 
 ### Turning on payments
 
