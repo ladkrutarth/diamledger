@@ -323,7 +323,8 @@ def build_router():
         try:
             email = parse_email_request(request.state.body)
         except InputError as error:
-            return JSONResponse({"error": str(error)}, status_code=400)
+            log.warning("Invalid send-email request: %s", error)
+            return JSONResponse({"error": "Invalid email request payload."}, status_code=400)
         result = await dispatch_email(request.app.state.pool, user, email, request.app.state.options.create_mail_transport)
         if not result.ok:
             return JSONResponse({"error": result.error}, status_code=result.status)
