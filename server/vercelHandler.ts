@@ -17,11 +17,11 @@ function getApp(): Promise<Express> {
       if (!process.env.DATABASE_URL || !process.env.SESSION_SECRET) {
         return errorApp('Set DATABASE_URL and SESSION_SECRET in the Vercel project settings, then redeploy.');
       }
-      const { initMonitoring } = await import('./monitoring.js');
+      const { initMonitoring } = await import('./core/monitoring.js');
       await initMonitoring();
-      const { createPool, migrateOnStart, runMigrations } = await import('./db.js');
+      const { createPool, migrateOnStart, runMigrations } = await import('./core/db.js');
       const { createApp } = await import('./app.js');
-      const { seedDemoUser } = await import('./seed.js');
+      const { seedDemoUser } = await import('./core/seed.js');
       const pool = createPool();
       if (migrateOnStart()) await runMigrations(pool);
       await seedDemoUser(pool);
@@ -29,7 +29,7 @@ function getApp(): Promise<Express> {
     })().catch(async (error: unknown) => {
       appPromise = undefined;
       console.error('Vercel API failed to start:', error);
-      const { reportError } = await import('./monitoring.js');
+      const { reportError } = await import('./core/monitoring.js');
       await reportError(error, { path: 'startup' }).catch(() => undefined);
       const message = error instanceof Error ? error.message : 'Could not connect to the database.';
       return errorApp(message);

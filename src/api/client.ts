@@ -160,6 +160,7 @@ export type ReminderDraft = {
   html: string;
   recipients: string[];
   figures: ReminderFigures;
+  phone?: string;
   createdAt: string;
 };
 
@@ -363,12 +364,18 @@ export type ForexRow = {
   invoiceInr: number | null;
   bankInr: number | null;
   gainInr: number | null;
+  referenceBankRateInr: number | null;
+  referenceBankRateSource: string | null;
+  referenceInvoiceRateInr: number | null;
+  estimatedGainInr: number | null;
 };
 
 export type ForexReport = {
   month: string;
   rows: ForexRow[];
   missingRateCount: number;
+  estimatedCount: number;
+  estimatedNetInr: number;
   totals: { gainInr: number; lossInr: number; netInr: number };
 };
 
@@ -447,4 +454,501 @@ export function queryString(params: Record<string, string>): string {
   }
   const text = search.toString();
   return text ? `?${text}` : '';
+}
+
+// ---------- Exchange rates ----------
+
+export type RateInfo = { rateInr: number; source: string; date: string };
+
+export type RatesReport = {
+  today: string;
+  latest: RateInfo | null;
+  reference: Array<{ date: string; rateInr: number; source: string }>;
+  company: Array<{ date: string; rateInr: number; note: string }>;
+  refreshError: string;
+  source: string;
+};
+
+// ---------- Activity history ----------
+
+export type AuditEvent = {
+  id: string;
+  at: string;
+  userEmail: string;
+  action: string;
+  summary: string;
+  entityType: string;
+  entityId: string;
+};
+
+// ---------- AI bank statement reader ----------
+
+export type StatementLine = { date: string; amountUsd: number; reference: string; narration: string; bankRateInr: number | null };
+
+// ---------- GST refund, KP register, certificates ----------
+
+export type RefundRow = {
+  invoiceId: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  buyerName: string;
+  destinationCountry: string;
+  totalUsd: number;
+  exchangeRateInr: number | null;
+  valueInr: number | null;
+  shippingBillNo: string;
+  shippingBillDate: string | null;
+  portCode: string;
+  fobUsd: number | null;
+  fobInr: number | null;
+  brcNumber: string;
+  brcDate: string;
+  brcUsd: number | null;
+  issues: string[];
+  ready: boolean;
+};
+
+export type RefundReport = {
+  from: string;
+  to: string;
+  rows: RefundRow[];
+  totals: { invoices: number; ready: number; valueUsd: number; readyValueInr: number; readyFobInr: number };
+};
+
+export type KpRow = {
+  invoiceId: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  buyerName: string;
+  destinationCountry: string;
+  kpcNumber: string;
+  hsCodes: string[];
+  carats: number;
+  roughCarats: number;
+  valueUsd: number;
+  issues: string[];
+};
+
+export type KpReport = {
+  from: string;
+  to: string;
+  rows: KpRow[];
+  totals: { shipments: number; withKpc: number; roughCarats: number; carats: number; issues: number };
+};
+
+export type CertificateRow = {
+  invoiceId: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  line: number;
+  description: string;
+  certificateNo: string;
+  hsCode: string;
+  pieces: number;
+  carats: number;
+  colorClarity: string;
+  shape: string;
+  lab: 'GIA' | 'IGI' | 'HRD' | '';
+  verifyUrl: string;
+  issues: Array<{ tone: 'red' | 'amber'; text: string }>;
+};
+
+export type CertificateReport = {
+  from: string;
+  to: string;
+  rows: CertificateRow[];
+  totals: { lines: number; certified: number; duplicates: number; warnings: number };
+};
+
+// ---------- Parcels ----------
+
+export type Parcel = {
+  id: string;
+  parcelId: string;
+  description: string;
+  receivedOn: string | null;
+  source: string;
+  piecesIn: number;
+  caratsIn: number;
+  notes: string;
+  caratsOut: number;
+  piecesOut: number;
+  draftCarats: number;
+  balanceCarats: number;
+  invoices: string[];
+  status: 'in_stock' | 'partial' | 'sold' | 'over';
+  stockKind: 'rough' | 'polished';
+  costInr: number | null;
+  madeFrom: string;
+  roughCaratsUsed: number | null;
+  consumedCarats: number;
+};
+
+export type ParcelRegister = {
+  parcels: Parcel[];
+  unregistered: Array<{ parcelId: string; carats: number; invoices: string[] }>;
+  totals: { caratsIn: number; caratsOut: number; balanceCarats: number; overInvoiced: number };
+};
+
+// ---------- Buyer portal ----------
+
+export type PortalLink = {
+  id: string;
+  buyerName: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  lastViewedAt: string | null;
+  createdBy: string;
+  active: boolean;
+};
+
+export type PortalInvoice = {
+  id: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  status: string;
+  totalUsd: number;
+  paidUsd: number;
+  dueUsd: number;
+  overdue: boolean;
+  invoice: import('../types/invoice').InvoiceState;
+};
+
+export type PortalView = {
+  exporterName: string;
+  buyerName: string;
+  expiresAt: string;
+  invoices: PortalInvoice[];
+  totals: { invoices: number; dueUsd: number; overdueUsd: number };
+};
+
+// ---------- Cash-flow forecast ----------
+
+export type ForecastInvoice = {
+  id: string;
+  invoiceNumber: string;
+  buyerName: string;
+  dueDate: string;
+  expectedOn: string;
+  balanceUsd: number;
+  buyerAvgDaysLate: number | null;
+  basis: string;
+};
+
+export type ForecastBucket = { expectedUsd: number; invoices: ForecastInvoice[] };
+
+export type CashFlowForecast = {
+  today: string;
+  weeks: Array<ForecastBucket & { start: string; end: string }>;
+  overdue: ForecastBucket;
+  later: ForecastBucket;
+  totals: { openUsd: number; next4WeeksUsd: number };
+};
+
+// ---------- Purchases and input tax credit ----------
+
+export type Purchase = {
+  id: string;
+  kind: 'import' | 'local';
+  supplierName: string;
+  supplierGstin: string;
+  supplierCountry: string;
+  documentNo: string;
+  documentDate: string;
+  portCode: string;
+  description: string;
+  carats: number;
+  parcelId: string;
+  taxableInr: number;
+  igstInr: number;
+  cgstInr: number;
+  sgstInr: number;
+  taxInr: number;
+  relatedParty: boolean;
+  notes: string;
+};
+
+export type ItcStatus = 'matched' | 'mismatch' | 'missing_in_2b' | 'not_in_books' | 'itc_blocked';
+
+export type ItcMatch = {
+  month: string;
+  gstr2bImported: boolean;
+  importedMonths: string[];
+  rows: Array<{
+    status: ItcStatus;
+    detail: string;
+    purchaseId: string | null;
+    supplierName: string;
+    supplierGstin: string;
+    documentNo: string;
+    documentDate: string | null;
+    kind: 'import' | 'local';
+    booksTaxInr: number | null;
+    gstr2bTaxInr: number | null;
+    gstr2bMonth: string | null;
+  }>;
+  totals: { booksItcInr: number; gstr2bItcInr: number; matchedItcInr: number; atRiskItcInr: number; unclaimedItcInr: number; mismatches: number };
+};
+
+// ---------- Stock register ----------
+
+export type StockTotals = {
+  opening: number;
+  purchased: number;
+  produced: number;
+  consumed: number;
+  sold: number;
+  closing: number;
+  closingValueInr: number;
+  parcelsWithoutCost: number;
+};
+
+export type StockRegisterReport = {
+  year: string;
+  parcels: Array<{
+    parcelId: string;
+    description: string;
+    stockKind: 'rough' | 'polished';
+    receivedOn: string | null;
+    madeFrom: string;
+    opening: number;
+    received: number;
+    consumed: number;
+    sold: number;
+    closing: number;
+    costPerCaratInr: number | null;
+    closingValueInr: number | null;
+    negative: boolean;
+  }>;
+  rough: StockTotals;
+  polished: StockTotals;
+  yieldPercent: number | null;
+  processLossCarats: number;
+  soldWithoutParcel: { rough: number; polished: number };
+  purchaseRegisterCarats: number;
+  negativeParcels: string[];
+};
+
+// ---------- Audit checks and the tax audit pack ----------
+
+export type AuditFinding = {
+  id: string;
+  check: string;
+  severity: 'high' | 'medium' | 'low';
+  title: string;
+  detail: string;
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+};
+
+export type AuditChecksReport = {
+  findings: AuditFinding[];
+  summary: { high: number; medium: number; low: number; byCheck: Record<string, number> };
+  labels: Record<string, string>;
+};
+
+export type AuditPackReport = {
+  year: string;
+  turnover: {
+    lut: { invoices: number; valueUsd: number; valueInr: number; missingRate: number };
+    igst: { invoices: number; valueUsd: number; valueInr: number; missingRate: number };
+    totalUsd: number;
+    totalInr: number;
+    missingRate: number;
+    cancelled: number;
+  };
+  receivables: { totalUsd: number; pastRealizationUsd: number; realizationMonths: number };
+  forex: { gainInr: number; lossInr: number; netInr: number; paymentsWithoutRate: number };
+  stock: { rough: StockTotals; polished: StockTotals; yieldPercent: number | null; processLossCarats: number; negativeParcels: string[] };
+  tds: { count: number; amountInr: number; tdsInr: number; withoutTds: number; withoutTdsInr: number; missing15ca: number; missing15cb: number };
+  checks: { high: number; medium: number; low: number };
+  summary: Array<[string, string, string, string, string]>;
+};
+
+// ---------- Payments abroad (TDS, Form 15CA / 15CB) ----------
+
+export type ForeignPayment = {
+  id: string;
+  payeeName: string;
+  payeeCountry: string;
+  nature: 'commission' | 'freight' | 'professional' | 'royalty' | 'interest' | 'other';
+  paidOn: string;
+  currency: string;
+  amountFc: number;
+  rateInr: number;
+  amountInr: number;
+  taxableInIndia: boolean;
+  tdsRate: number;
+  tdsInr: number;
+  dtaaApplied: boolean;
+  trcReceived: boolean;
+  form15caAck: string;
+  form15cbNo: string;
+  relatedParty: boolean;
+  reference: string;
+  notes: string;
+  payeeYearInr: number;
+  form15caPart: 'A' | 'C' | 'D';
+  issues: Array<{ tone: 'red' | 'amber'; text: string }>;
+};
+
+export type ForeignPaymentReport = {
+  payments: ForeignPayment[];
+  totals: { count: number; amountInr: number; tdsInr: number; withoutTds: number; missing15ca: number; missing15cb: number; issues: number };
+  threshold15cbInr: number;
+};
+
+// ---------- Tally reconciliation ----------
+
+export type TallyReconcileReport = {
+  vouchersImported: number;
+  rows: Array<{
+    area: 'sales' | 'receipts' | 'purchases';
+    status: 'matched' | 'amount_differs' | 'date_differs' | 'missing_in_tally' | 'missing_in_app';
+    reference: string;
+    party: string;
+    appDate: string | null;
+    tallyDate: string | null;
+    appAmount: string;
+    tallyAmount: string;
+    invoiceId: string | null;
+    detail: string;
+  }>;
+  totals: { matched: number; amountDiffers: number; dateDiffers: number; missingInTally: number; missingInApp: number };
+};
+
+// ---------- Requests between accountant and company ----------
+
+export type ClientRequest = {
+  id: string;
+  title: string;
+  detail: string;
+  dueDate: string | null;
+  overdue: boolean;
+  status: 'open' | 'answered' | 'closed';
+  invoiceId: string | null;
+  invoiceNumber: string | null;
+  createdByEmail: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: number;
+  lastMessageAt: string | null;
+};
+
+export type ClientRequestMessage = {
+  id: string;
+  userEmail: string;
+  body: string;
+  file: { name: string; type: string; size: number } | null;
+  createdAt: string;
+};
+
+// ---------- Notices ----------
+
+export type TaxNotice = {
+  id: string;
+  authority: 'gst' | 'income_tax' | 'customs' | 'dgft' | 'rbi' | 'other';
+  authorityLabel: string;
+  formType: string;
+  referenceNo: string;
+  period: string;
+  issuedOn: string | null;
+  replyDue: string | null;
+  daysLeft: number | null;
+  urgency: 'none' | 'overdue' | 'due_soon' | 'upcoming';
+  amountInr: number | null;
+  status: 'open' | 'replied' | 'closed';
+  summary: string;
+  reply: string;
+  replySource: string;
+  invoiceIds: string[];
+  invoiceNumbers: string[];
+};
+
+// ---------- Practice (accountant firm) ----------
+
+export type PracticeClient = {
+  id: string;
+  name: string;
+  role: string;
+  health: {
+    score: number;
+    grade: 'good' | 'watch' | 'at_risk';
+    overdue: number;
+    dueSoon: number;
+    actions: number;
+    openRequests: number;
+    overdueRequests: number;
+    openNotices: number;
+    noticesDueSoon: number;
+    noticesOverdue: number;
+    nextItems: Array<{ title: string; dueDate: string | null; status: string }>;
+  };
+  engagement: { feeInr: number; billing: string; notes: string } | null;
+  time: { monthMinutes: number; yearMinutes: number; billableYearMinutes: number };
+  fees: { billedYearInr: number; unpaidInr: number; unpaidBills: number };
+};
+
+export type PracticeOverview = {
+  year: string;
+  clients: PracticeClient[];
+  totals: { clients: number; atRisk: number; unpaidInr: number; billedYearInr: number; monthMinutes: number };
+};
+
+export type PracticeTimeEntry = { id: string; clientId: string; clientName: string; userEmail: string; workDate: string; minutes: number; task: string; billable: boolean };
+
+export type PracticeBill = {
+  id: string;
+  clientId: string;
+  clientName: string;
+  billNo: string;
+  billDate: string;
+  amountInr: number;
+  paidOn: string | null;
+  daysUnpaid: number | null;
+  notes: string;
+};
+
+// ---------- Buyer credit risk ----------
+
+export type BuyerRisk = {
+  buyerName: string;
+  buyerId: string | null;
+  invoices: number;
+  paidInvoices: number;
+  outstandingUsd: number;
+  overdueUsd: number;
+  maxDaysOverdue: number;
+  avgDaysLate: number | null;
+  onTimePercent: number | null;
+  totalUsd: number;
+  lastInvoice: string | null;
+  creditLimitUsd: number | null;
+  headroomUsd: number | null;
+  grade: 'A' | 'B' | 'C' | 'D' | 'new';
+  gradeLabel: string;
+};
+
+export type ShipmentCheck = { grade: BuyerRisk['grade']; gradeLabel: string; outstandingUsd: number; creditLimitUsd: number | null; warnings: string[] };
+
+/** Reads a file chosen in the browser as text. */
+export function readFileText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read the file.'));
+    reader.readAsText(file);
+  });
+}
+
+/** Reads a file chosen in the browser as base64, without the data: prefix. */
+export function readFileBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? '').replace(/^data:[^,]*,/, ''));
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read the file.'));
+    reader.readAsDataURL(file);
+  });
 }

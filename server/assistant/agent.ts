@@ -1,6 +1,6 @@
 import type { Content, FunctionCall, Part } from '@google/genai';
-import type { DbPool } from '../db.js';
-import type { CurrentUser } from '../http.js';
+import type { DbPool } from '../core/db.js';
+import type { CurrentUser } from '../core/http.js';
 import { callModel, usageFrom, type TokenUsage } from '../ai/call.js';
 import { GEMINI_MODEL, activeModelName, aiProvider, gemini } from '../ai/client.js';
 import { hfAssistantModel } from '../ai/huggingface.js';
