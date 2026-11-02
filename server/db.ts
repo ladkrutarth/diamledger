@@ -14,10 +14,24 @@ export function createPool(connectionString = process.env.DATABASE_URL): DbPool 
   }
   const local = /localhost|127\.0\.0\.1/.test(connectionString);
   return new Pool({
-    connectionString,
+    connectionString: local ? connectionString : withoutSslParams(connectionString),
     connectionTimeoutMillis: 10000,
     ssl: local ? undefined : { rejectUnauthorized: false },
   });
+}
+
+/**
+ * SSL is set by the `ssl` option above. An `sslmode` in the URL would override it and makes pg
+ * print a security warning on every cold start, so it is removed here.
+ */
+export function withoutSslParams(connectionString: string): string {
+  try {
+    const url = new URL(connectionString);
+    for (const key of ['sslmode', 'ssl', 'uselibpqcompat']) url.searchParams.delete(key);
+    return url.toString();
+  } catch {
+    return connectionString;
+  }
 }
 
 export function migrationsDir(): string {
