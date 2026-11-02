@@ -17,12 +17,17 @@ const STATUS: Record<Status, { tone: 'green' | 'amber' | 'red' | 'slate'; label:
 
 const AREAS = { sales: 'Sales', receipts: 'Receipts', purchases: 'Purchases' } as const;
 
+const sanitizeMonth = (value: string, fallback: string): string => (/^\d{4}-(0[1-9]|1[0-2])$/.test(value) ? value : fallback);
+
 export const TallyDesk: React.FC<{ canWrite: boolean; onOpen: (id: string) => void }> = ({ canWrite, onOpen }) => {
   const [from, setFrom] = useState(previousMonth());
   const [to, setTo] = useState(previousMonth());
   const [hideMatched, setHideMatched] = useState(true);
   const [message, setMessage] = useState('');
-  const { data, error, setError, reload } = useReport<TallyReconcileReport>(`/api/tally/reconcile?from=${from}&to=${to}`, 'Could not compare with Tally.');
+  const safeFrom = sanitizeMonth(from, previousMonth());
+  const safeTo = sanitizeMonth(to, previousMonth());
+  const query = new URLSearchParams({ from: safeFrom, to: safeTo }).toString();
+  const { data, error, setError, reload } = useReport<TallyReconcileReport>(`/api/tally/reconcile?${query}`, 'Could not compare with Tally.');
 
   const upload = async (file: File | undefined) => {
     if (!file) return;
@@ -51,7 +56,7 @@ export const TallyDesk: React.FC<{ canWrite: boolean; onOpen: (id: string) => vo
                 <input type="file" accept=".xml,.csv,text/xml,text/csv" className="hidden" onChange={(event) => upload(event.target.files?.[0])} />
               </label>
             )}
-            <a href={`/api/tally/reconcile/csv?from=${from}&to=${to}`} className={secondaryButton}>
+            <a href={`/api/tally/reconcile/csv?${query}`} className={secondaryButton}>
               <Download className="w-3.5 h-3.5" />
               CSV
             </a>
