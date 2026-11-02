@@ -26,6 +26,7 @@ READ_METHODS = {"GET", "HEAD", "OPTIONS"}
 _CA_ALLOWED = [
     re.compile(r"^/api/auth/logout$"),
     re.compile(r"^/api/auth/change-password$"),
+    re.compile(r"^/api/auth/two-factor(/|$)"),
     re.compile(r"^/api/workspace/switch$"),
     re.compile(r"^/api/assistant/"),
     re.compile(r"^/api/practice/"),
@@ -51,10 +52,12 @@ def chartered_accountant_allowed(method: str, path: str, user: CurrentUser | Non
 
 
 RAW_BODY_PATHS = {"/api/billing/webhook"}  # signed over the exact bytes; the route reads them itself
+RAW_BODY_PREFIXES = ("/api/collections/webhook/",)  # each exporter's own Razorpay webhook
 
 
 async def _read_body(request: Request):
-    if request.method in READ_METHODS or request.url.path in RAW_BODY_PATHS:
+    path = request.url.path
+    if request.method in READ_METHODS or path in RAW_BODY_PATHS or path.startswith(RAW_BODY_PREFIXES):
         return None
     raw = await request.body()
     if not raw:

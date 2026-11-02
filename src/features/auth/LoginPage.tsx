@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Gem } from 'lucide-react';
-import { ApiError, api, type AuthUser } from '../../api/client';
+import { ApiError, api, needsSecondStep, type AuthUser, type LoginResult, type TwoFactorChallenge } from '../../api/client';
 import { COMPANY_NAME, PRODUCT_NAME, PRODUCT_TAGLINE } from '../../brand';
 
-type Mode = 'sign-in' | 'create-account' | 'forgot' | 'reset';
+type Mode = 'sign-in' | 'create-account' | 'forgot' | 'reset' | 'two-factor';
 
 interface Props {
   onSuccess: (user: AuthUser) => void;
@@ -24,7 +24,16 @@ const COPY: Record<Mode, { title: string; subtitle: string; submit: string }> = 
     submit: 'Send reset link',
   },
   reset: { title: 'Choose a new password', subtitle: 'The link works once and expires after 1 hour.', submit: 'Save new password' },
+  'two-factor': { title: 'Enter your sign-in code', subtitle: 'Your account has two-step sign-in turned on.', submit: 'Verify' },
 };
+
+/** What to tell the user about where their code comes from. */
+export function codeHint(challenge: TwoFactorChallenge, texted: boolean): string {
+  if (texted && challenge.phoneHint) return `Enter the 6-digit code we texted to ${challenge.phoneHint}.`;
+  if (challenge.methods.includes('app')) return 'Open your authenticator app and enter the 6-digit code it shows for this site.';
+  if (challenge.methods.includes('sms')) return 'We will text a 6-digit code to your phone.';
+  return 'Enter one of your recovery codes.';
+}
 
 const SHOW_DEMO_LOGIN = import.meta.env.DEV || import.meta.env.VITE_SHOW_DEMO_LOGIN === 'true';
 
@@ -39,6 +48,9 @@ export const LoginPage: React.FC<Props> = ({ onSuccess, resetToken, onResetFinis
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [challenge, setChallenge] = useState<TwoFactorChallenge | null>(null);
+  const [code, setCode] = useState('');
+  const [texted, setTexted] = useState(false);
 
   const copy = COPY[mode];
 
@@ -46,8 +58,18 @@ export const LoginPage: React.FC<Props> = ({ onSuccess, resetToken, onResetFinis
     setMode(next);
     setError('');
     setInfo('');
+    setChallenge(null);
+    setCode('');
+    setTexted(false);
     if (mode === 'reset') onResetFinished?.();
   };
+
+  const sendText = () =>
+    run(async () => {
+      const result = await api<{ phoneHint: string }>('/api/auth/two-factor/sms', { method: 'POST' });
+      setTexted(true);
+      setInfo(`Code sent to ${result.phoneHint}.`);
+    }, 'Could not send the text message.');
 
   const run = async (action: () => Promise<void>, fallback: string) => {
     setError('');
@@ -64,7 +86,7 @@ export const LoginPage: React.FC<Props> = ({ onSuccess, resetToken, onResetFinis
 
   const signIn = (nextEmail: string, nextPassword: string, path: '/api/auth/login' | '/api/auth/register') =>
     run(async () => {
-      const result = await api<{ user: AuthUser }>(path, {
+      const result = await api<LoginResult>(path, {
         method: 'POST',
         body: JSON.stringify({
           email: nextEmail,
@@ -72,6 +94,20 @@ export const LoginPage: React.FC<Props> = ({ onSuccess, resetToken, onResetFinis
           ...(path === '/api/auth/register' ? { companyName } : {}),
         }),
       });
+      if (needsSecondStep(result)) {
+        // The password was right; the session is not signed in until a code is entered.
+        setChallenge(result);
+        setMode('two-factor');
+        setPassword('');
+        setCode('');
+        setTexted(false);
+        if (!result.methods.includes('app') && result.methods.includes('sms')) {
+          const sent = await api<{ phoneHint: string }>('/api/auth/two-factor/sms', { method: 'POST' });
+          setTexted(true);
+          setInfo(`Code sent to ${sent.phoneHint}.`);
+        }
+        return;
+      }
       onSuccess(result.user);
     }, 'Could not sign in.');
 
@@ -80,6 +116,26 @@ export const LoginPage: React.FC<Props> = ({ onSuccess, resetToken, onResetFinis
     const data = new FormData(event.currentTarget);
     const nextEmail = String(data.get('email') || email);
     const nextPassword = String(data.get('password') || password);
+
+    if (mode === 'two-factor') {
+      await run(async () => {
+        try {
+          const result = await api<{ user: AuthUser }>('/api/auth/two-factor/verify', {
+            method: 'POST',
+            body: JSON.stringify({ code }),
+          });
+          onSuccess(result.user);
+        } catch (err) {
+          if (err instanceof ApiError && err.body?.code === 'two_factor_expired') {
+            setMode('sign-in');
+            setChallenge(null);
+            setCode('');
+          }
+          throw err;
+        }
+      }, 'Could not check the code.');
+      return;
+    }
 
     if (mode === 'forgot') {
       await run(async () => {
@@ -109,8 +165,8 @@ export const LoginPage: React.FC<Props> = ({ onSuccess, resetToken, onResetFinis
     await signIn(nextEmail, nextPassword, mode === 'create-account' ? '/api/auth/register' : '/api/auth/login');
   };
 
-  const needsEmail = mode !== 'reset';
-  const needsPassword = mode !== 'forgot';
+  const needsEmail = mode !== 'reset' && mode !== 'two-factor';
+  const needsPassword = mode !== 'forgot' && mode !== 'two-factor';
   const newPassword = mode === 'create-account' || mode === 'reset';
 
   return (
@@ -159,6 +215,40 @@ export const LoginPage: React.FC<Props> = ({ onSuccess, resetToken, onResetFinis
                 onChange={(event) => setCompanyName(event.target.value)}
                 className={inputClass}
               />
+            </div>
+          )}
+          {mode === 'two-factor' && challenge && (
+            <div>
+              <p className="text-sm text-slate-700">{codeHint(challenge, texted)}</p>
+              <label htmlFor="code" className="mt-3 block text-xs font-semibold text-slate-700 mb-1">
+                Code
+              </label>
+              <input
+                id="code"
+                name="code"
+                autoComplete="one-time-code"
+                autoFocus
+                required
+                maxLength={20}
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                className={`${inputClass} font-mono tracking-widest`}
+              />
+              <div className="mt-2 flex flex-col items-start gap-1 text-xs">
+                {challenge.methods.includes('sms') && (
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={sendText}
+                    className="font-semibold text-slate-600 hover:text-slate-950 disabled:opacity-50"
+                  >
+                    {texted ? 'Send a new code' : `Text a code to ${challenge.phoneHint ?? 'my phone'} instead`}
+                  </button>
+                )}
+                {challenge.methods.includes('recovery') && (
+                  <p className="text-slate-500">Lost your phone? Enter one of your recovery codes instead.</p>
+                )}
+              </div>
             </div>
           )}
           {needsEmail && (

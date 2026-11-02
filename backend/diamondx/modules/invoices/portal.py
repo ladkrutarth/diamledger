@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 import secrets
 from datetime import datetime, timezone
@@ -12,7 +11,7 @@ from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
 
 from ...core.context import api_router
-from ...core.http import ApiError, CurrentUser, body, is_uuid, iso, require_roles
+from ...core.http import ApiError, CurrentUser, body, is_uuid, iso, public_base_url, require_roles
 from ...core.numbers import js_number, js_round, money
 
 link_manager = require_roles("admin", "member", "tax")
@@ -24,12 +23,17 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def site_url(request: Request) -> str:
-    configured = os.environ.get("APP_URL", "").strip().rstrip("/")
-    if configured:
-        return configured
-    proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
-    return f"{proto}://{request.headers.get('x-forwarded-host') or request.headers.get('host', '')}"
+async def find_link(pool, token: str):
+    """The live link for a token (id, organization_id, buyer_name, organization_name), or None."""
+    if not _TOKEN.match(token or ""):
+        return None
+    return await pool.fetchrow(
+        """SELECT l.id, l.organization_id, l.buyer_name, o.name AS organization_name
+           FROM buyer_portal_links l JOIN organizations o ON o.id = l.organization_id
+           WHERE l.token_hash = $1 AND l.revoked_at IS NULL AND l.expires_at > now()""",
+        hash_token(token),
+    )
+
 
 
 def build_router():
@@ -76,7 +80,7 @@ def build_router():
         )
         # The token is shown once. Only its hash is stored, so a lost link has to be replaced.
         return JSONResponse(
-            {"id": row["id"], "url": f"{site_url(request)}/?portal={token}", "expiresAt": iso(row["expires_at"])}, status_code=201
+            {"id": row["id"], "url": f"{public_base_url(request)}/?portal={token}", "expiresAt": iso(row["expires_at"])}, status_code=201
         )
 
     @router.delete("/portal-links/{link_id}")
@@ -112,7 +116,8 @@ def build_router():
                       i.status, i.total_usd, COALESCE(p.paid, 0) AS paid_usd,
                       (i.status = 'issued' AND COALESCE(i.invoice_date, i.created_at::date) + i.credit_days < current_date
                         AND i.total_usd - COALESCE(p.paid, 0) > 0) AS overdue,
-                      i.data
+                      i.data,
+                      EXISTS (SELECT 1 FROM payment_claims c WHERE c.invoice_id = i.id AND c.status = 'submitted') AS claim_pending
                FROM invoices i
                LEFT JOIN LATERAL (SELECT SUM(amount_usd) AS paid FROM payments WHERE invoice_id = i.id) p ON true
                WHERE i.organization_id = $1 AND LOWER(TRIM(i.buyer_name)) = LOWER(TRIM($2)) AND i.status IN ('issued', 'paid')
@@ -134,6 +139,7 @@ def build_router():
                     "paidUsd": paid_usd,
                     "dueUsd": money(max(total_usd - paid_usd, 0)),
                     "overdue": r["overdue"],
+                    "claimPending": r["claim_pending"],
                     "invoice": r["data"],
                 }
             )
@@ -143,9 +149,14 @@ def build_router():
         for row in rows:
             if row["overdue"]:
                 overdue += row["dueUsd"]
+        # Imported here: the payments module imports this one for find_link.
+        from ..collections.online_payments import portal_payment_options
+
+        payment = await portal_payment_options(pool, found["organization_id"])
         return JSONResponse(
             {
                 "exporterName": found["organization_name"],
+                "payment": payment,
                 "buyerName": found["buyer_name"],
                 "expiresAt": iso(found["expires_at"]),
                 "invoices": rows,

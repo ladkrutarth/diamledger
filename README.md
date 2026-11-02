@@ -197,7 +197,7 @@ Code is grouped by feature. Each API module owns its routes, SQL, and rules; eac
 │   │   │   └── seed.py, demo_data.py  Demo account and sample data
 │   │   │
 │   │   ├── modules/             One folder per business area
-│   │   │   ├── auth/            Sign in, password reset, team members
+│   │   │   ├── auth/            Sign in, two-step sign-in, password reset, team members
 │   │   │   ├── company/         Company profile, buyers, buyer credit risk
 │   │   │   ├── invoices/        Invoices (schema.py), payments, dashboard, buyer portal, manifest reading
 │   │   │   ├── collections/     Overdue reminders, invoice email

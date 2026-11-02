@@ -83,14 +83,20 @@ def _retryable(error: BaseException) -> bool:
     return isinstance(status, int) and (status == 429 or status >= 500)
 
 
-async def _attempt(run: ModelRun[T]) -> tuple[T, TokenUsage | None]:
+async def _attempt(run: ModelRun[T], deadline: float | None) -> tuple[T, TokenUsage | None]:
+    limit = timeout_seconds()
+    if deadline is not None:
+        limit = min(limit, deadline - time.monotonic())
+        if limit <= 0:
+            raise AiUnavailableError("timeout", "The AI service took too long to answer. Try again.")
     try:
-        return await asyncio.wait_for(run(), timeout_seconds())
+        return await asyncio.wait_for(run(), limit)
     except asyncio.TimeoutError:
         raise AiUnavailableError("timeout", "The AI service took too long to answer. Try again.") from None
 
 
-async def call_model(pool: Pool, context: ModelCallContext, run: ModelRun[T]) -> T:
+async def call_model(pool: Pool, context: ModelCallContext, run: ModelRun[T], deadline: float | None = None) -> T:
+    """`deadline` (a `time.monotonic()` value) caps the call and its retry, for callers with a time budget."""
     if not ai_enabled():
         await _record(pool, context, "blocked", 0)
         raise AiUnavailableError("disabled", "AI features are turned off on this server.")
@@ -102,7 +108,7 @@ async def call_model(pool: Pool, context: ModelCallContext, run: ModelRun[T]) ->
     last_error: BaseException | None = None
     for tries in (1, 2):
         try:
-            value, usage = await _attempt(run)
+            value, usage = await _attempt(run, deadline)
             await _record(pool, context, "ok", (time.monotonic() - started) * 1000, usage)
             return value
         except Exception as error:

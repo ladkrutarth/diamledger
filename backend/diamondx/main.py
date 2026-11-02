@@ -18,7 +18,7 @@ from .app import AppOptions, create_app
 from .core.db import create_pool, migrate_on_start, run_migrations_with_retry
 from .core.monitoring import init_monitoring
 from .core.seed import seed_demo_user
-from .core.settings import REPO_ROOT, is_production, load_env
+from .core.settings import REPO_ROOT, is_production, load_env, production_settings_problem
 
 log = logging.getLogger("diamondx")
 
@@ -28,6 +28,9 @@ def build() -> FastAPI:
     load_env()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     init_monitoring()
+    problem = production_settings_problem()
+    if problem:
+        raise SystemExit(problem)
 
     holder: dict[str, FastAPI] = {}
 

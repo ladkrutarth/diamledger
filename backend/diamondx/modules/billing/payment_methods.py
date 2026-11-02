@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 from ...core.context import api_router
 from ...core.db import Pool
 from ...core.form_input import form_reader
-from ...core.http import ApiError, CurrentUser, body, is_uuid, iso, require_admin, require_user
+from ...core.http import ApiError, CurrentUser, body, is_uuid, iso, public_base_url, require_admin, require_user
 from ...core.numbers import js_number, js_round, to_fixed
 from .plans import is_cycle, plan_by_key, price_for, usd_price_for
 from .providers import is_platform_admin, paypal_configured, seller_bank_account
@@ -86,12 +86,6 @@ class PaypalClient:
         return await self.call("POST", f"/v2/checkout/orders/{quote(order_id, safe='')}/capture", {}, f"capture-{order_id}")
 
 
-def site_origin(request: Request) -> str:
-    configured = os.environ.get("APP_URL", "").strip().rstrip("/")
-    if configured and re.match(r"^https?://", configured):
-        return configured
-    proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
-    return f"{proto}://{request.headers.get('x-forwarded-host') or request.headers.get('host', '')}"
 
 
 # --- Bank transfer -----------------------------------------------------------------------------------
@@ -284,7 +278,7 @@ def build_router():
     async def paypal_order(request: Request, user: CurrentUser = Depends(require_admin)):
         plan, cycle = _plan_and_cycle(body(request))
         amount = usd_price_for(plan, cycle)
-        origin = site_origin(request)
+        origin = public_base_url(request)
         try:
             order = await paypal(request).create_order({
                 "intent": "CAPTURE",

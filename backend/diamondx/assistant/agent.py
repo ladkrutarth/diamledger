@@ -8,6 +8,7 @@ Conversations are stored in Gemini's Content shape ({"role", "parts": [{"text"} 
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
@@ -23,6 +24,10 @@ from .tools import ToolContext, can_use_tax_tools, run_tool, tool_declarations
 ASSISTANT_PROMPT_VERSION = "assistant-v2"
 MAX_STEPS = 6
 MAX_SESSION_MESSAGES = 40
+# A whole turn (every model call and tool) must finish well inside the serverless limit (vercel.json maxDuration 60).
+TURN_SECONDS = 45
+# Do not start another model call with less time than this left.
+MIN_STEP_SECONDS = 5
 
 AssistantModel = Callable[[dict], Awaitable[dict]]
 
@@ -183,13 +188,17 @@ async def run_turn(pool: Pool, user: CurrentUser, session_id: str, model: Assist
     actions: list[dict] = []
     tool_results: list = []
     reply: str | None = None
+    deadline = time.monotonic() + TURN_SECONDS
 
     for _ in range(MAX_STEPS):
+        if deadline - time.monotonic() < MIN_STEP_SECONDS:
+            break
+
         async def run():
             value = await model({"system": system, "contents": list(contents), "tools": tools})
             return value, as_usage(value.get("usage"))
 
-        answer = await call_model(pool, call_context, run)
+        answer = await call_model(pool, call_context, run, deadline)
         push("model", model_content(answer))
         calls = answer.get("functionCalls") or []
         if not calls:
@@ -211,7 +220,7 @@ async def run_turn(pool: Pool, user: CurrentUser, session_id: str, model: Assist
 
     step_limit_reached = reply is None
     if step_limit_reached:
-        reply = "I could not finish that in the steps I am allowed. Try asking a narrower question."
+        reply = "I could not finish that in the time and steps I am allowed. Try asking a narrower question."
         push("model", {"role": "model", "parts": [{"text": reply}]})
     final_reply = reply or "I could not find an answer to that."
 

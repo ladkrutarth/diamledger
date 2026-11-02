@@ -9,11 +9,14 @@ from fastapi.responses import JSONResponse
 from ...core.context import api_router
 from ...core.http import ApiError, CurrentUser, body, is_role, is_uuid, iso, require_admin
 from ..billing.subscription import limit_message
-from .users import MIN_PASSWORD_LENGTH, hash_password, is_valid_email, normalize_email
+from .users import MIN_PASSWORD_LENGTH, check_password, find_user, hash_password, is_valid_email, normalize_email, read_password
 
 
 def to_member(row) -> dict:
-    return {"id": row["id"], "email": row["email"], "role": row["role"], "createdAt": iso(row["created_at"])}
+    member = {"id": row["id"], "email": row["email"], "role": row["role"], "createdAt": iso(row["created_at"])}
+    if "two_factor" in row.keys():
+        member["twoFactor"] = bool(row["two_factor"])
+    return member
 
 
 async def admin_count(pool, organization_id: str) -> int:
@@ -26,7 +29,10 @@ def build_router():
     @router.get("")
     async def list_members(request: Request, user: CurrentUser = Depends(require_admin)):
         rows = await request.app.state.pool.fetch(
-            "SELECT id, email, role, created_at FROM users WHERE organization_id = $1 ORDER BY created_at",
+            """SELECT u.id, u.email, u.role, u.created_at,
+                      (t.totp_secret_encrypted IS NOT NULL OR t.phone IS NOT NULL) IS TRUE AS two_factor
+               FROM users u LEFT JOIN user_two_factor t ON t.user_id = u.id
+               WHERE u.organization_id = $1 ORDER BY u.created_at""",
             user.organization_id,
         )
         return {"members": [to_member(row) for row in rows]}
@@ -97,5 +103,32 @@ def build_router():
             raise ApiError(404, "Team member not found.")
         await pool.execute("DELETE FROM session WHERE sess->>'userId' = $1", member_id)
         return Response(status_code=204)
+
+    @router.post("/{member_id}/two-factor/reset")
+    async def reset_two_factor(member_id: str, request: Request, user: CurrentUser = Depends(require_admin)):
+        """For a member who lost their phone and their recovery codes: turns their two-step sign-in off so they
+        can sign in with their password and set it up again. The admin confirms with their own password."""
+        if member_id == user.id:
+            raise ApiError(409, "Change your own two-step sign-in under Account.")
+        if not is_uuid(member_id):
+            raise ApiError(404, "Team member not found.")
+        pool = request.app.state.pool
+        admin = await find_user(pool, "id", user.id)
+        if not admin or not await check_password(read_password(body(request).get("password")), admin["password_hash"]):
+            raise ApiError(400, "Your password is not right.")
+        target = await pool.fetchrow("SELECT id, email FROM users WHERE id = $1 AND organization_id = $2", member_id, user.organization_id)
+        if not target:
+            raise ApiError(404, "Team member not found.")
+        async with pool.acquire() as conn, conn.transaction():
+            removed = await conn.execute("DELETE FROM user_two_factor WHERE user_id = $1", member_id)
+            await conn.execute("DELETE FROM two_factor_codes WHERE user_id = $1", member_id)
+            await conn.execute("DELETE FROM rate_limits WHERE key = $1", f"two-factor:{member_id}")
+            # Any session they have, signed in or half-way through signing in, ends.
+            await conn.execute(
+                "DELETE FROM session WHERE sess->>'userId' = $1 OR sess->>'twoFactorUserId' = $1", member_id
+            )
+        if removed == "DELETE 0":
+            raise ApiError(409, f"{target['email']} does not have two-step sign-in on.")
+        return {"id": member_id, "email": target["email"], "twoFactor": False}
 
     return router

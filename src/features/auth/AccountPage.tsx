@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ROLE_LABEL, api, errorMessage, sendJson, type AuthUser } from '../../api/client';
 import { Card, Field, Notice, Page, primaryButton } from '../../components/ui';
+import { TwoFactorSettings } from './TwoFactorSettings';
 
 export const AccountPage: React.FC<{ user: AuthUser }> = ({ user }) => {
   const [currentPassword, setCurrentPassword] = useState('');
@@ -77,6 +78,8 @@ export const AccountPage: React.FC<{ user: AuthUser }> = ({ user }) => {
           </button>
         </form>
       </Card>
+
+      <TwoFactorSettings email={user.email} />
     </Page>
   );
 };

@@ -17,11 +17,14 @@ from fastapi import Request
 
 from .db import Pool
 from .http import ApiError, CurrentUser
+from .settings import trust_proxy
 
 
 def client_ip(request: Request) -> str:
-    """The address one proxy hop back (Express `trust proxy` 1), with IPv6 cut to its /56 network."""
-    forwarded = request.headers.get("x-forwarded-for")
+    """The caller's address, with IPv6 cut to its /56 network. Behind a trusted proxy (`trust_proxy`) that is
+    the last X-Forwarded-For entry, the one the proxy added; otherwise the socket address, because a client
+    talking to the app directly can write any X-Forwarded-For it likes."""
+    forwarded = request.headers.get("x-forwarded-for") if trust_proxy() else None
     if forwarded:
         ip = forwarded.split(",")[-1].strip()
     else:
@@ -81,12 +84,24 @@ RULES: list[LimitRule] = [
     LimitRule("/api/auth/login", "login", 15, 10, "Too many failed sign-in attempts. Wait 15 minutes, or reset your password.", _login_key, skip_successful=True),
     LimitRule("/api/auth/register", "register", 60, 5, "Too many accounts created from this network. Try again in an hour.", _ip),
     LimitRule("/api/auth/forgot-password", "forgot", 60, 5, "Too many reset requests. Try again in an hour.", _ip),
+    LimitRule("/api/auth/change-password", "change-password", 15, 10, "Too many wrong passwords. Wait 15 minutes, or reset your password.", _user_or_ip, skip_successful=True),
+    LimitRule("/api/auth/two-factor/verify", "two-factor-verify", 15, 20, "Too many sign-in codes tried. Wait 15 minutes.", _ip, skip_successful=True),
+    LimitRule("/api/auth/two-factor/sms", "two-factor-sms", 60, 10, "Too many text messages requested. Try again in an hour.", _ip),
+    LimitRule("/api/auth/two-factor/:method/setup", "two-factor-setup", 60, 10, "Too many attempts. Try again in an hour.", _user_or_ip),
+    LimitRule("/api/auth/two-factor/:method/confirm", "two-factor-confirm", 15, 10, "Too many wrong codes. Wait 15 minutes.", _user_or_ip, skip_successful=True),
+    LimitRule("/api/auth/two-factor/:method", "two-factor-remove", 15, 10, "Too many attempts. Wait 15 minutes.", _user_or_ip, method="DELETE"),
+    LimitRule("/api/team/members/:id/two-factor/reset", "two-factor-reset", 15, 10, "Too many attempts. Wait 15 minutes.", _user_or_ip, skip_successful=True),
+    LimitRule("/api/auth/two-factor/recovery-codes", "two-factor-recovery", 60, 10, "Too many attempts. Try again in an hour.", _user_or_ip),
     LimitRule("/api/auth/reset-password", "reset", 60, 10, "Too many reset attempts. Try again in an hour.", _ip),
     LimitRule("/api/send-email", "send-email", 60, 30, "Email limit reached: 30 emails per hour. Try again later.", _user_or_ip),
     LimitRule("/api/verify-smtp", "verify-smtp", 60, 20, "Too many SMTP checks. Try again in an hour.", _user_or_ip),
     LimitRule("/api/parse-manifest", "parse-manifest", 60, 60, "AI parsing limit reached: 60 manifests per hour. Try again later.", _user_or_ip),
     LimitRule("/api/bank/parse-statement", "parse-statement", 60, 30, "AI statement reading limit reached: 30 statements per hour. Try again later.", _user_or_ip),
     LimitRule("/api/portal/:token", "buyer-portal", 15, 120, "Too many requests. Try again in a few minutes.", _ip, method="GET"),
+    LimitRule("/api/portal/:token/invoices/:id/order", "portal-pay", 15, 30, "Too many payment attempts. Try again in a few minutes.", _ip),
+    LimitRule("/api/portal/:token/payments/verify", "portal-verify", 15, 60, "Too many requests. Try again in a few minutes.", _ip),
+    LimitRule("/api/portal/:token/invoices/:id/claims", "portal-claim", 60, 10, "Too many bank transfer reports. Try again in an hour.", _ip),
+    LimitRule("/api/payment-gateway", "payment-gateway", 60, 20, "Too many attempts to save the Razorpay keys. Try again in an hour.", _user_or_ip, method="PUT"),
     LimitRule("/api/reminders/draft", "reminder-draft", 60, 60, "Reminder drafting limit reached: 60 drafts per hour. Try again later.", _user_or_ip),
     LimitRule("/api/reminders/:id/send", "reminder-send", 60, 30, "Reminder limit reached: 30 reminders per hour. Try again later.", _user_or_ip),
     LimitRule("/api/assistant/sessions/:id/messages", "assistant-message", 60, 30, "Assistant limit reached: 30 questions per hour. Try again later.", _user_or_ip),

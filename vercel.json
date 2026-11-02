@@ -39,7 +39,7 @@
   "functions": {
     "api/index.py": {
       "includeFiles": "{db/**,backend/diamondx/**,src/data/sampleInvoices.json}",
-      "maxDuration": 15
+      "maxDuration": 60
     }
   },
   "crons": [
