@@ -392,12 +392,11 @@ export function AssistantPanel({ userId, role, onClose, onChanged, onOpenInvoice
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end">
-      <button aria-label="Close assistant" onClick={onClose} className="flex-1 bg-slate-950/20" />
+    <div className="fixed bottom-5 right-5 z-40 flex justify-end w-[calc(100vw-2.5rem)] max-w-md h-[min(640px,calc(100vh-2.5rem))]">
       <aside
         role="dialog"
         aria-label={taxDesk ? 'Tax and invoice assistant' : 'Invoice assistant'}
-        className="w-full max-w-md h-full bg-white border-l border-slate-200 shadow-xl flex flex-col"
+        className="w-full h-full bg-white border border-slate-200 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
           <div className="flex items-center gap-2">

@@ -114,6 +114,14 @@ export default function App() {
     };
   }, [resetToken]);
 
+  // Pop the assistant open once per login session.
+  useEffect(() => {
+    if (!user) return;
+    if (window.sessionStorage.getItem('assistant-greeted')) return;
+    window.sessionStorage.setItem('assistant-greeted', '1');
+    setIsAssistantOpen(true);
+  }, [user?.id]);
+
   useEffect(() => {
     if (!user) return;
     api<{ companies: WorkspaceCompany[] }>('/api/workspace/companies')
@@ -284,6 +292,8 @@ export default function App() {
       // The local session still ends if the server is unreachable.
     }
     setUser(null);
+    setIsAssistantOpen(false);
+    window.sessionStorage.removeItem('assistant-greeted');
     setCompany(null);
     setInvoice(buildNewInvoice(null));
     setInvoiceId(null);
@@ -724,6 +734,17 @@ export default function App() {
           onApplyParsedData={handleApplyAiData}
           onClose={() => setIsAiParserOpen(false)}
         />
+      )}
+
+      {!isAssistantOpen && (
+        <button
+          onClick={() => setIsAssistantOpen(true)}
+          aria-label="Open assistant"
+          className="fixed bottom-5 right-5 z-40 flex items-center gap-2 px-4 py-3 rounded-full bg-indigo-600 text-white text-sm font-semibold shadow-lg hover:bg-indigo-700"
+        >
+          <Bot className="w-5 h-5" />
+          Assistant
+        </button>
       )}
 
       {isAssistantOpen && (
