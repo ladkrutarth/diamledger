@@ -13,6 +13,8 @@ export const TeamPage: React.FC<Props> = ({ currentUserId }) => {
   const [role, setRole] = useState<Role>('member');
   const [message, setMessage] = useState<{ tone: 'error' | 'success'; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const [resetting, setResetting] = useState<TeamMember | null>(null);
+  const [adminPassword, setAdminPassword] = useState('');
 
   const load = () =>
     api<{ members: TeamMember[] }>('/api/team/members')
@@ -62,6 +64,27 @@ export const TeamPage: React.FC<Props> = ({ currentUserId }) => {
       await load();
     } catch (err) {
       setMessage({ tone: 'error', text: errorMessage(err, 'Could not remove the team member.') });
+    }
+  };
+
+  const resetTwoFactor = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!resetting) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await api(`/api/team/members/${resetting.id}/two-factor/reset`, sendJson('POST', { password: adminPassword }));
+      setMessage({
+        tone: 'success',
+        text: `Two-step sign-in is off for ${resetting.email}, and they have been signed out. They can now sign in with their password; ask them to turn two-step on again under Account.`,
+      });
+      setResetting(null);
+      setAdminPassword('');
+      await load();
+    } catch (err) {
+      setMessage({ tone: 'error', text: errorMessage(err, 'Could not reset two-step sign-in.') });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -119,7 +142,37 @@ export const TeamPage: React.FC<Props> = ({ currentUserId }) => {
                     {member.email}
                     {member.id === currentUserId && <span className="ml-2 text-xs text-slate-500">(you)</span>}
                   </p>
-                  <p className="text-xs text-slate-500">Added {member.createdAt.slice(0, 10)}</p>
+                  <p className="text-xs text-slate-500">
+                    Added {member.createdAt.slice(0, 10)}
+                    {member.twoFactor && <span className="ml-2 font-semibold text-emerald-700">Two-step on</span>}
+                  </p>
+                  {resetting?.id === member.id && (
+                    <form onSubmit={resetTwoFactor} className="mt-2 flex flex-wrap items-end gap-2">
+                      <div className="w-56">
+                        <Field
+                          label="Your password, to confirm"
+                          type="password"
+                          value={adminPassword}
+                          onChange={setAdminPassword}
+                          required
+                          autoComplete="current-password"
+                        />
+                      </div>
+                      <button type="submit" disabled={busy} className={dangerButton}>
+                        Turn off their two-step
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setResetting(null);
+                          setAdminPassword('');
+                        }}
+                        className={secondaryButton}
+                      >
+                        Cancel
+                      </button>
+                    </form>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <select
@@ -134,6 +187,19 @@ export const TeamPage: React.FC<Props> = ({ currentUserId }) => {
                       </option>
                     ))}
                   </select>
+                  {member.twoFactor && member.id !== currentUserId && resetting?.id !== member.id && (
+                    <button
+                      type="button"
+                      title="For someone who lost their phone and their recovery codes"
+                      onClick={() => {
+                        setResetting(member);
+                        setAdminPassword('');
+                      }}
+                      className={secondaryButton}
+                    >
+                      Reset two-step
+                    </button>
+                  )}
                   {member.id !== currentUserId && (
                     <button type="button" onClick={() => remove(member)} className={dangerButton}>
                       Remove

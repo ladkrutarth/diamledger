@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
-import re
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -14,7 +12,8 @@ from fastapi import Depends, Request
 from fastapi.responses import JSONResponse
 
 from ...core.context import api_router
-from ...core.http import ApiError, CurrentUser, body, require_user
+from ...core.http import ApiError, CurrentUser, body, public_base_url, require_user
+from .two_factor import load_two_factor, start_pending_sign_in, two_factor_on
 from .users import (
     MIN_PASSWORD_LENGTH,
     check_password,
@@ -36,13 +35,6 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def app_base_url(request: Request) -> str:
-    configured = os.environ.get("APP_URL", "")
-    if re.match(r"^https?://", configured):
-        return configured.rstrip("/")
-    proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
-    return f"{proto}://{host}"
 
 
 def build_router():
@@ -91,6 +83,10 @@ def build_router():
         user = await find_user(request.app.state.pool, "email", email)
         if not user or not await check_password(password, user["password_hash"]):
             raise ApiError(401, "Invalid email or password.")
+        second_step = await load_two_factor(request.app.state.pool, user["id"])
+        if two_factor_on(second_step):
+            # Not signed in yet: the session only remembers who passed the password, until a code is entered.
+            return await start_pending_sign_in(request, user["id"], second_step)
         await request.app.state.sessions.regenerate(request.state.session, userId=user["id"])
         return {"user": public_user(to_current_user(user))}
 
@@ -140,7 +136,7 @@ def build_router():
                 user["id"],
                 datetime.now(timezone.utc) + RESET_TOKEN_TTL,
             )
-            link = f"{app_base_url(request)}/?reset={token}"
+            link = f"{public_base_url(request)}/?reset={token}"
             try:
                 await request.app.state.options.send_password_reset_email(user["email"], link)
             except Exception:

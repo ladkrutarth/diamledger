@@ -5,6 +5,7 @@ import { BUYER_KEYS, formatUsd } from '../../utils/invoiceDefaults';
 import { Badge, TableHead, cell, useReport } from '../../components/shared';
 import { Card, Field, Notice, Page, dangerButton, primaryButton, secondaryButton } from '../../components/ui';
 import { PortalLinks } from './PortalLinks';
+import { IncomingPayments } from '../collections/IncomingPayments';
 
 const LABELS: Record<keyof BuyerContact, string> = {
   companyName: 'Company name',
@@ -217,6 +218,8 @@ export const BuyersPage: React.FC<{ readOnly?: boolean; isAdmin?: boolean }> = (
           </ul>
         )}
       </Card>
+
+      <IncomingPayments canConfirm={!readOnly} />
 
       <BuyerRiskCard isAdmin={isAdmin} />
 

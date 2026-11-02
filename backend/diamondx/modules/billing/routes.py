@@ -19,6 +19,8 @@ from .plans import TRIAL_DAYS, is_cycle, plan_by_key, plan_json, price_for, publ
 from .providers import is_platform_admin, payment_options
 from .razorpay import RazorpayClient, RazorpayError, checkout_signature_valid, razorpay_key_id, webhook_signature_valid
 from .subscription import access_of, load_subscription, usage_of
+from .tax_invoice import add_routes as add_tax_invoice_routes
+from .tax_invoice import issue_quietly
 
 log = logging.getLogger("diamondx.billing")
 
@@ -91,6 +93,9 @@ async def record_payment(pool: Pool, organization_id: str, payment: dict, subscr
         payment["id"], organization_id, subscription_id, payment.get("invoice_id"), plan_key, cycle, int(payment["amount"]), payment["status"],
         payment.get("method") or "", to_date(payment.get("created_at")) or datetime.now(timezone.utc), provider, currency,
     )
+    # The GST tax invoice, once the money is captured. It never blocks the payment itself.
+    if payment["status"] in ("captured", "paid"):
+        await issue_quietly(pool, payment["id"])
 
 
 async def billing_summary(pool: Pool, organization_id: str, include_history: bool) -> dict:
@@ -98,8 +103,10 @@ async def billing_summary(pool: Pool, organization_id: str, include_history: boo
     info = access_of(row)
     usage = await usage_of(pool, organization_id)
     history = await pool.fetch(
-        """SELECT razorpay_payment_id, plan_key, billing_cycle, amount_paise, status, method, paid_at, provider, currency
-           FROM subscription_payments WHERE organization_id = $1 ORDER BY paid_at DESC LIMIT 50""",
+        """SELECT p.razorpay_payment_id, p.plan_key, p.billing_cycle, p.amount_paise, p.status, p.method, p.paid_at, p.provider, p.currency,
+                  i.id AS invoice_id, i.invoice_number
+           FROM subscription_payments p LEFT JOIN subscription_invoices i ON i.subscription_payment_id = p.razorpay_payment_id
+           WHERE p.organization_id = $1 ORDER BY p.paid_at DESC LIMIT 50""",
         organization_id,
     ) if include_history else []
     options = payment_options()
@@ -122,7 +129,8 @@ async def billing_summary(pool: Pool, organization_id: str, include_history: boo
         "paymentsEnabled": any(options.values()),
         "payments": [
             {"id": p["razorpay_payment_id"], "planKey": p["plan_key"], "cycle": p["billing_cycle"], "amount": p["amount_paise"] / 100,
-             "currency": p["currency"], "provider": p["provider"], "status": p["status"], "method": p["method"], "paidAt": iso(p["paid_at"])}
+             "currency": p["currency"], "provider": p["provider"], "status": p["status"], "method": p["method"], "paidAt": iso(p["paid_at"]),
+             "invoiceId": p["invoice_id"], "invoiceNumber": p["invoice_number"]}
             for p in history
         ],
     }
@@ -134,6 +142,7 @@ def _razorpay(request: Request) -> RazorpayClient:
 
 def build_router():
     router = api_router(prefix="/api/billing")
+    add_tax_invoice_routes(router)
 
     @router.get("/plans")
     async def plans():

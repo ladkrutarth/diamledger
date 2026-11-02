@@ -266,6 +266,48 @@ async def test_stops_after_the_step_cap(make, pool, model):
     assert len(model.requests) == MAX_STEPS
 
 
+async def test_stops_when_the_turn_runs_out_of_time(make, pool, model, monkeypatch):
+    import time
+
+    from diamondx.assistant import agent as agent_module
+
+    monkeypatch.setattr(agent_module, "TURN_SECONDS", 0.5)
+    monkeypatch.setattr(agent_module, "MIN_STEP_SECONDS", 0.2)
+    agent, _ = await demo_company(make, pool)
+    session_id = await new_session(agent)
+
+    def slow(req):
+        time.sleep(0.2)
+        return call("list_overdue")(req)
+
+    model.steps = [slow for _ in range(MAX_STEPS)]
+    response = await ask(agent, session_id, "Take your time")
+    assert response.status_code == 200 and response.json()["stepLimitReached"] is True
+    assert len(model.requests) < MAX_STEPS
+
+
+async def test_a_hung_model_call_ends_with_the_turn(make, pool, monkeypatch):
+    import asyncio
+    import time
+
+    from diamondx.assistant import agent as agent_module
+
+    monkeypatch.setattr(agent_module, "TURN_SECONDS", 0.5)
+    monkeypatch.setattr(agent_module, "MIN_STEP_SECONDS", 0.1)
+
+    async def hang(_request):
+        await asyncio.sleep(30)
+
+    app = create_app(pool, AppOptions(assistant_model=hang, draft_reminder_text=fake_drafter))
+    agent = httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 5000)), base_url="http://test")
+    assert (await agent.post("/api/auth/register", json={"email": "slow@example.com", "password": "password123"})).status_code == 201
+    session_id = await new_session(agent)
+    started = time.monotonic()
+    response = await ask(agent, session_id, "Hello")
+    assert time.monotonic() - started < 3
+    assert response.status_code == 503 and response.json()["reason"] == "timeout"
+
+
 async def test_caps_the_messages_in_a_conversation(make, pool, model):
     agent, _ = await demo_company(make, pool)
     session_id = await new_session(agent)

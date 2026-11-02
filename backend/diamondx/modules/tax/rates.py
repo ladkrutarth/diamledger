@@ -6,6 +6,7 @@ its own rate for a date, such as the customs notified rate, and that rate wins o
 
 from __future__ import annotations
 
+import hmac
 import logging
 import math
 import os
@@ -118,7 +119,10 @@ async def list_rates(pool: Pool, organization_id: str, start: date, end: date) -
 
 def cron_authorized(request: Request) -> bool:
     secret = os.environ.get("CRON_SECRET")
-    return bool(secret) and request.headers.get("authorization") == f"Bearer {secret}"
+    if not secret:
+        return False
+    sent = request.headers.get("authorization", "")
+    return hmac.compare_digest(sent.encode(), f"Bearer {secret}".encode())
 
 
 def build_router():

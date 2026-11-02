@@ -44,6 +44,11 @@ class ServerlessApp:
         load_env()
         if not os.environ.get("DATABASE_URL") or not os.environ.get("SESSION_SECRET"):
             return "Set DATABASE_URL and SESSION_SECRET in the Vercel project settings, then redeploy."
+        from .core.settings import production_settings_problem
+
+        problem = production_settings_problem()
+        if problem:
+            return problem
         from .app import create_app
         from .core.db import create_pool, migrate_on_start, run_migrations
         from .core.monitoring import init_monitoring
