@@ -55,6 +55,33 @@ function fakeRazorpay() {
   return { fetcher, calls };
 }
 
+/** A stand-in for PayPal: hands out a token, creates orders, and captures them for the stored amount. */
+function fakePaypal(options: { captureAmount?: string; prefix?: string } = {}) {
+  const calls: Array<{ method: string; path: string; body: unknown }> = [];
+  const orders = new Map<string, string>();
+  let next = 0;
+  const fetcher = (async (url: string | URL, init?: RequestInit) => {
+    const pathname = new URL(String(url)).pathname;
+    const method = init?.method ?? 'GET';
+    const body = typeof init?.body === 'string' && init.body.startsWith('{') ? JSON.parse(init.body) : init?.body ?? null;
+    calls.push({ method, path: pathname, body });
+    const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+    if (pathname === '/v1/oauth2/token') return json({ access_token: 'paypal-token' });
+    if (method === 'POST' && pathname === '/v2/checkout/orders') {
+      const id = `${options.prefix ?? 'ORDER'}${++next}`;
+      orders.set(id, body.purchase_units[0].amount.value);
+      return json({ id, status: 'PAYER_ACTION_REQUIRED', links: [{ rel: 'payer-action', href: `https://www.sandbox.paypal.com/checkoutnow?token=${id}` }] }, 201);
+    }
+    const capture = /^\/v2\/checkout\/orders\/([^/]+)\/capture$/.exec(pathname);
+    if (method === 'POST' && capture) {
+      const value = options.captureAmount ?? orders.get(capture[1]) ?? '0.00';
+      return json({ id: capture[1], status: 'COMPLETED', purchase_units: [{ payments: { captures: [{ id: `CAP-${capture[1]}`, status: 'COMPLETED', amount: { value, currency_code: 'USD' } }] } }] }, 201);
+    }
+    return json({ message: 'not found' }, 404);
+  }) as typeof fetch;
+  return { fetcher, calls };
+}
+
 const checkoutSignature = (paymentId: string, subscriptionId: string) =>
   crypto.createHmac('sha256', KEY_SECRET).update(`${paymentId}|${subscriptionId}`).digest('hex');
 
@@ -76,7 +103,7 @@ describe('plans and access rules', () => {
     const base = {
       organization_id: 'x', plan_key: 'growth' as const, billing_cycle: 'monthly' as const, status: 'halted', trial_ends_at: new Date(0),
       current_period_start: null, cancel_at_period_end: false, razorpay_subscription_id: 'sub', pending_subscription_id: null,
-      pending_plan_key: null, pending_cycle: null,
+      pending_plan_key: null, pending_cycle: null, payment_method: 'razorpay' as const,
     };
     const day = 86_400_000;
     expect(accessOf({ ...base, current_period_end: new Date(Date.now() + day) }).access).toBe('active');
@@ -92,6 +119,7 @@ describe('subscriptions with Razorpay', () => {
   let app: ReturnType<typeof createApp>;
   let postgres: EmbeddedPostgres | undefined;
   const razorpay = fakeRazorpay();
+  const paypal = fakePaypal();
   let owner: ReturnType<typeof request.agent>;
   let organizationId: string;
 
@@ -106,6 +134,12 @@ describe('subscriptions with Razorpay', () => {
       .send(raw);
   };
 
+  // Sign-up is limited to 5 an hour per IP; these tests create more companies than that.
+  const register = async (agent: ReturnType<typeof request.agent>, email: string, companyName: string) => {
+    await pool.query('DELETE FROM rate_limits');
+    return agent.post('/api/auth/register').send({ email, password: 'password123', companyName });
+  };
+
   beforeAll(async () => {
     process.env.SESSION_SECRET = 'test-session-secret';
     fs.mkdirSync(databaseDir, { recursive: true });
@@ -118,15 +152,16 @@ describe('subscriptions with Razorpay', () => {
     await postgres.createDatabase('diamondx_test');
     pool = new pg.Pool({ connectionString: testUrl });
     await runMigrations(pool);
-    app = createApp(pool, { razorpayFetch: razorpay.fetcher });
+    app = createApp(pool, { razorpayFetch: razorpay.fetcher, paypalFetch: paypal.fetcher });
     owner = request.agent(app);
-    const registered = await owner.post('/api/auth/register').send({ email: 'owner@example.com', password: 'password123', companyName: 'Meridian Diamond Exports' });
+    const registered = await register(owner, 'owner@example.com', 'Meridian Diamond Exports');
     expect(registered.status).toBe(201);
     organizationId = registered.body.user.organizationId;
   }, 60000);
 
   afterAll(async () => {
-    for (const key of ['RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'RAZORPAY_WEBHOOK_SECRET']) delete process.env[key];
+    for (const key of ['RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'RAZORPAY_WEBHOOK_SECRET', 'BILLING_BANK_ACCOUNT_NUMBER', 'BILLING_BANK_IFSC',
+      'BILLING_BANK_ACCOUNT_NAME', 'PLATFORM_ADMIN_EMAILS', 'PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET']) delete process.env[key];
     (app?.get('sessionStore') as { close?: () => void } | undefined)?.close?.();
     if (pool) await pool.end();
     if (postgres) await postgres.stop();
@@ -175,7 +210,7 @@ describe('subscriptions with Razorpay', () => {
     });
     expect(verified.status).toBe(200);
     expect(verified.body).toEqual(expect.objectContaining({ planKey: 'growth', cycle: 'monthly', access: 'active' }));
-    expect(verified.body.payments).toEqual([expect.objectContaining({ id: 'pay_1', amountInr: 4719 })]);
+    expect(verified.body.payments).toEqual([expect.objectContaining({ id: 'pay_1', amount: 4719, currency: 'INR', provider: 'razorpay' })]);
 
     // Checking out the plan you are already on is refused.
     const again = await owner.post('/api/billing/checkout').send({ plan: 'growth', cycle: 'monthly' });
@@ -249,7 +284,7 @@ describe('subscriptions with Razorpay', () => {
 
   it('makes a company read-only after the trial or the paid period ends, and still lets it pay', async () => {
     const other = request.agent(app);
-    const registered = await other.post('/api/auth/register').send({ email: 'late@example.com', password: 'password123', companyName: 'Late Gems' });
+    const registered = await register(other, 'late@example.com', 'Late Gems');
     await pool.query(`UPDATE organization_subscriptions SET trial_ends_at = now() - interval '1 day' WHERE organization_id = $1`, [registered.body.user.organizationId]);
     // The row is created on first use; make sure it exists, then expire it.
     await other.get('/api/billing');
@@ -267,7 +302,7 @@ describe('subscriptions with Razorpay', () => {
 
   it('counts client companies against the accountant firm plan', async () => {
     const firm = request.agent(app);
-    const registered = await firm.post('/api/auth/register').send({ email: 'partner@firm.example', password: 'password123', companyName: 'Shah & Co' });
+    const registered = await register(firm, 'partner@firm.example', 'Shah & Co');
     await firm.get('/api/billing');
     await pool.query(
       `UPDATE organization_subscriptions SET plan_key = 'growth', status = 'active', current_period_end = now() + interval '20 days' WHERE organization_id = $1`,
@@ -282,5 +317,95 @@ describe('subscriptions with Razorpay', () => {
     expect(blocked.body.error).toContain('not on the CA Firm plan');
     await pool.query(`UPDATE organization_subscriptions SET plan_key = 'ca_firm' WHERE organization_id = $1`, [registered.body.user.organizationId]);
     expect((await owner.post('/api/team/accountants').send({ email: 'partner@firm.example', role: 'ca' })).status).toBe(201);
+  });
+  it('pays by bank transfer: shows the account, takes the UTR, and the operator approves it', async () => {
+    const company = request.agent(app);
+    const registered = await register(company, 'neft@example.com', 'Neft Gems');
+    const orgId = registered.body.user.organizationId;
+    expect((await company.post('/api/billing/bank-transfer').send({ plan: 'growth', cycle: 'yearly' })).status).toBe(503);
+
+    process.env.BILLING_BANK_ACCOUNT_NAME = 'DiamondX Software Pvt Ltd';
+    process.env.BILLING_BANK_ACCOUNT_NUMBER = '50200012345678';
+    process.env.BILLING_BANK_IFSC = 'hdfc0000123';
+    process.env.PLATFORM_ADMIN_EMAILS = 'ops@example.com';
+    expect((await company.get('/api/billing/plans')).body.paymentOptions).toEqual(expect.objectContaining({ bankTransfer: true, upi: true }));
+
+    const started = await company.post('/api/billing/bank-transfer').send({ plan: 'growth', cycle: 'yearly' });
+    expect(started.status).toBe(201);
+    expect(started.body.account).toEqual(expect.objectContaining({ accountNumber: '50200012345678', ifsc: 'HDFC0000123' }));
+    expect(started.body.transfer).toEqual(expect.objectContaining({ amountInr: 47188, status: 'awaiting', referenceCode: expect.stringMatching(/^DX-[A-Z2-9]{6}$/) }));
+    const id = started.body.transfer.id;
+
+    expect((await company.post(`/api/billing/bank-transfer/${id}/submit`).send({ utr: 'abc', paidOn: '2026-11-01' })).status).toBe(400);
+    const sent = await company.post(`/api/billing/bank-transfer/${id}/submit`).send({ utr: 'hdfcr 5202611011234', paidOn: '2026-11-01', payerBank: 'HDFC' });
+    expect(sent.status).toBe(200);
+    expect(sent.body.transfer).toEqual(expect.objectContaining({ status: 'submitted', utr: 'HDFCR5202611011234' }));
+    expect((await company.get('/api/billing')).body.planKey).toBe('trial');
+
+    // Only the site operator can approve.
+    expect((await company.get('/api/platform/bank-transfers')).status).toBe(403);
+    const ops = request.agent(app);
+    await register(ops, 'ops@example.com', 'DiamondX Ops');
+    expect((await ops.get('/api/billing')).body.platformAdmin).toBe(true);
+    const queue = await ops.get('/api/platform/bank-transfers');
+    expect(queue.body.transfers).toEqual([expect.objectContaining({ id, organizationName: 'Neft Gems', utr: 'HDFCR5202611011234' })]);
+    expect((await ops.post(`/api/platform/bank-transfers/${id}/reject`).send({})).status).toBe(400);
+    const approved = await ops.post(`/api/platform/bank-transfers/${id}/approve`).send({ note: 'Credit seen' });
+    expect(approved.status).toBe(200);
+    expect((await ops.post(`/api/platform/bank-transfers/${id}/approve`).send({})).status).toBe(409);
+
+    const billing = (await company.get('/api/billing')).body;
+    expect(billing).toEqual(expect.objectContaining({ planKey: 'growth', cycle: 'yearly', access: 'active', paymentMethod: 'bank_transfer' }));
+    expect(billing.payments[0]).toEqual(expect.objectContaining({ provider: 'bank_transfer', amount: 47188, currency: 'INR' }));
+    const end = new Date(billing.currentPeriodEnd);
+    expect(end.getTime() - Date.now()).toBeGreaterThan(360 * 86_400_000);
+    expect((await company.post('/api/billing/cancel')).status).toBe(409);
+
+    // The same UTR cannot pay twice.
+    const again = await company.post('/api/billing/bank-transfer').send({ plan: 'growth', cycle: 'yearly' });
+    expect((await company.post(`/api/billing/bank-transfer/${again.body.transfer.id}/submit`).send({ utr: 'HDFCR5202611011234', paidOn: '2026-11-02' })).status).toBe(409);
+
+    // Paying for the same plan again before it ends adds a year after the current one.
+    await company.post(`/api/billing/bank-transfer/${again.body.transfer.id}/submit`).send({ utr: 'HDFCR5202611029999', paidOn: '2026-11-02' });
+    await ops.post(`/api/platform/bank-transfers/${again.body.transfer.id}/approve`).send({});
+    const renewed = new Date((await company.get('/api/billing')).body.currentPeriodEnd);
+    expect(renewed.getTime() - end.getTime()).toBeGreaterThan(360 * 86_400_000);
+    expect(orgId).toBeTruthy();
+  });
+
+  it('pays by PayPal in US dollars for customers outside India', async () => {
+    const company = request.agent(app);
+    await register(company, 'dubai@example.com', 'Dubai Diamonds FZE');
+    expect((await company.post('/api/billing/paypal/order').send({ plan: 'business', cycle: 'monthly' })).status).toBe(503);
+    process.env.PAYPAL_CLIENT_ID = 'client';
+    process.env.PAYPAL_CLIENT_SECRET = 'secret';
+
+    const order = await company.post('/api/billing/paypal/order').send({ plan: 'business', cycle: 'monthly' });
+    expect(order.status).toBe(201);
+    expect(order.body).toEqual({ orderId: 'ORDER1', approveUrl: 'https://www.sandbox.paypal.com/checkoutnow?token=ORDER1', amountUsd: 99 });
+    const created = paypal.calls.find((call) => call.path === '/v2/checkout/orders')?.body as { purchase_units: Array<{ amount: unknown }>; payment_source: { paypal: { experience_context: { return_url: string } } } };
+    expect(created.purchase_units[0].amount).toEqual({ currency_code: 'USD', value: '99.00' });
+    expect(created.payment_source.paypal.experience_context.return_url).toMatch(/\/\?billing=paypal$/);
+
+    // Another company cannot capture this order.
+    expect((await owner.post('/api/billing/paypal/capture').send({ orderId: 'ORDER1' })).status).toBe(404);
+    const captured = await company.post('/api/billing/paypal/capture').send({ orderId: 'ORDER1' });
+    expect(captured.status).toBe(200);
+    expect(captured.body).toEqual(expect.objectContaining({ planKey: 'business', cycle: 'monthly', paymentMethod: 'paypal', access: 'active' }));
+    expect(captured.body.payments[0]).toEqual(expect.objectContaining({ provider: 'paypal', amount: 99, currency: 'USD' }));
+    // A repeated capture is harmless.
+    expect((await company.post('/api/billing/paypal/capture').send({ orderId: 'ORDER1' })).body.payments).toHaveLength(1);
+  });
+
+  it('refuses a PayPal capture for less than the plan price', async () => {
+    const short = fakePaypal({ captureAmount: '1.00', prefix: 'SHORT' });
+    const shortApp = createApp(pool, { razorpayFetch: razorpay.fetcher, paypalFetch: short.fetcher });
+    const company = request.agent(shortApp);
+    await register(company, 'short@example.com', 'Short Pay LLC');
+    const order = await company.post('/api/billing/paypal/order').send({ plan: 'starter', cycle: 'monthly' });
+    const captured = await company.post('/api/billing/paypal/capture').send({ orderId: order.body.orderId });
+    expect(captured.status).toBe(402);
+    expect((await company.get('/api/billing')).body.planKey).toBe('trial');
+    (shortApp.get('sessionStore') as { close?: () => void } | undefined)?.close?.();
   });
 });

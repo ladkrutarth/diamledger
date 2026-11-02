@@ -178,6 +178,22 @@ const RULES: LimitRule[] = [
     key: userOrIp,
   },
   {
+    path: '/api/billing/paypal/order',
+    name: 'paypal-order',
+    windowMinutes: 60,
+    limit: 20,
+    message: 'Too many PayPal attempts. Try again in an hour.',
+    key: userOrIp,
+  },
+  {
+    path: '/api/billing/bank-transfer',
+    name: 'bank-transfer',
+    windowMinutes: 60,
+    limit: 10,
+    message: 'Too many bank transfer requests. Try again in an hour.',
+    key: userOrIp,
+  },
+  {
     path: '/api/tally/import',
     name: 'tally-import',
     windowMinutes: 60,

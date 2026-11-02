@@ -49,7 +49,8 @@ Server tests (`server/tests/*.test.ts`) start a throwaway Postgres via `embedded
 - `modules/billing/plans.ts` holds plan prices (INR, excl. 18% GST), limits, and `featureForPath` (path → plan feature). `subscriptionGuard` runs right after `charteredAccountantGuard`: a lapsed company (trial over, or paid period + 3 grace days over) gets 402 on every non-GET except `/api/auth|billing|health|workspace`, and gated feature paths return 402 `plan_feature`. `practice` is checked against the user's home (firm) company.
 - A company with no `organization_subscriptions` row gets a 14-day trial on first use (`loadSubscription`); tests rely on this, so new companies have every feature.
 - Limits (`limitMessage`) are checked when adding a team member, issuing an invoice (counts `invoices.issued_at` this month), and granting an outside accountant (counts the firm's client companies).
-- Razorpay goes through `modules/billing/razorpay.ts`; inject a fake with `AppOptions.razorpayFetch`. The webhook needs the raw body: `jsonBodyParser` sends `/api/billing/webhook` to `express.raw` before touching `req.body`.
+- Payment methods: Razorpay (UPI, card, net banking; auto-renewing subscription) in `razorpay.ts`; bank transfer and PayPal (one period at a time, `activateOnePeriod`) in `paymentMethods.ts`; which are on comes from env in `providers.ts`. Bank transfers are approved by emails in `PLATFORM_ADMIN_EMAILS` under `/api/platform/*`. Never accept or store card numbers; cards are entered on Razorpay/PayPal pages only.
+- Razorpay goes through `modules/billing/razorpay.ts`; inject a fake with `AppOptions.razorpayFetch` (and `paypalFetch` for PayPal). The webhook needs the raw body: `jsonBodyParser` sends `/api/billing/webhook` to `express.raw` before touching `req.body`.
 
 ### Data
 - Migrations: `db/migrations/NNN_name.sql`, applied in order inside a transaction, recorded with checksums in `schema_migrations`, guarded by an advisory lock. **Never edit an applied migration** — add the next number. Migrations must stay pooler-safe (the app runs against Neon/pgbouncer-style poolers).
@@ -68,7 +69,9 @@ Server tests (`server/tests/*.test.ts`) start a throwaway Postgres via `embedded
 - Notice replies (`modules/tax/notices.ts`) follow the same rule as the assistant: a draft whose amounts are not in the facts (`isGrounded`) is replaced by a template written from the records.
 
 ### Frontend
-- `src/App.tsx` holds the shell/navigation; pages and tax desks are in `src/features/<area>/` (tax desks are tabs in `src/features/tax/TaxPage.tsx`).
+- `src/App.tsx` holds the shell/navigation and the invoice workspace state; pages and tax desks are in `src/features/<area>/`.
+- Invoice editor: `src/features/invoices/editor/` — `InvoiceEditor` (sections), `LineItemsEditor`, `InvoiceToolbar`, `fields.tsx` (fields read their own issues from `EditorContext`; `NumberField` keeps typed text so decimals work), and `invoiceChecks.ts` (pure, unit-tested export rules; errors block Issue in `App.changeStatus`). New invoice fields need a field in the editor and, if required for export, a rule in `checkInvoice`.
+- Tax desk: `TaxPage.tsx` defines `GROUPS` (Overview, GST, Bank & forex, Income tax & audit, Notices & sign-off); each desk is its own component. Add a desk there, with `feature` if it is plan-gated.
 - All HTTP goes through `src/api/client.ts` (`fetch` with `credentials: 'include'`, cookie session).
 - PDF (jspdf + html2canvas), Tally XML and SAP payloads are generated **in the browser** (`src/utils/`). Shared types/presets in `src/types/invoice.ts` and `src/data/sampleInvoices.ts` are also imported by server tests.
 - `@/` aliases the repo root.

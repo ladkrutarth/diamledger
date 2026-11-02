@@ -965,10 +965,13 @@ export type BillingPlan = {
   audience: string;
   monthlyInr: number;
   yearlyInr: number;
+  monthlyUsd: number;
+  yearlyUsd: number;
   limits: { users: number; invoicesPerMonth: number | null; clients: number | null };
   features: PlanFeature[];
   highlights: string[];
   prices: Record<BillingCycle, PlanPrice>;
+  pricesUsd: Record<BillingCycle, number>;
   yearlySavingInr: number;
 };
 
@@ -982,11 +985,58 @@ export type BillingSummary = {
   trialEndsAt: string | null;
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean;
+  paymentMethod: PaymentProvider | null;
   limits: BillingPlan['limits'];
   features: PlanFeature[];
   usage: { users: number; invoicesThisMonth: number; clients: number };
+  paymentOptions: PaymentOptions;
   paymentsEnabled: boolean;
-  payments: Array<{ id: string; planKey: string; cycle: BillingCycle | null; amountInr: number; status: string; method: string; paidAt: string }>;
+  platformAdmin?: boolean;
+  payments: Array<{
+    id: string;
+    planKey: string;
+    cycle: BillingCycle | null;
+    amount: number;
+    currency: 'INR' | 'USD';
+    provider: PaymentProvider;
+    status: string;
+    method: string;
+    paidAt: string;
+  }>;
+};
+
+export type PaymentProvider = 'razorpay' | 'bank_transfer' | 'paypal';
+export type PaymentOptions = { upi: boolean; card: boolean; netbanking: boolean; bankTransfer: boolean; paypal: boolean };
+
+export type SellerBankAccount = {
+  accountName: string;
+  bankName: string;
+  accountNumber: string;
+  ifsc: string;
+  branch: string;
+  accountType: string;
+  gstin: string;
+};
+
+export type BankTransfer = {
+  id: string;
+  organizationId: string;
+  organizationName?: string;
+  planKey: BillingPlan['key'];
+  planName: string;
+  cycle: BillingCycle;
+  amountInr: number;
+  referenceCode: string;
+  status: 'awaiting' | 'submitted' | 'approved' | 'rejected' | 'cancelled';
+  utr: string;
+  paidOn: string | null;
+  payerBank: string;
+  note: string;
+  createdByEmail: string;
+  reviewedByEmail: string;
+  reviewedAt: string | null;
+  reviewNote: string;
+  createdAt: string;
 };
 
 export type CheckoutStart = {

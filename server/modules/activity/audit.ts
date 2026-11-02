@@ -90,6 +90,9 @@ const RULES: Rule[] = [
   { method: 'POST', pattern: new RegExp(`^/api/notices/${UUID}/draft-reply$`), action: 'notice.draft', entityType: 'notice', summary: () => 'Drafted a notice reply' },
   { method: 'POST', pattern: /^\/api\/billing\/checkout$/, action: 'billing.checkout', entityType: 'billing', summary: (req) => `Started checkout for the ${req.body?.plan ?? ''} plan (${req.body?.cycle ?? ''})` },
   { method: 'POST', pattern: /^\/api\/billing\/verify$/, action: 'billing.paid', entityType: 'billing', summary: () => 'Paid for a plan' },
+  { method: 'POST', pattern: /^\/api\/billing\/bank-transfer$/, action: 'billing.bank_transfer', entityType: 'billing', summary: (req) => `Chose to pay the ${req.body?.plan ?? ''} plan (${req.body?.cycle ?? ''}) by bank transfer` },
+  { method: 'POST', pattern: new RegExp(`^/api/billing/bank-transfer/${UUID}/submit$`), action: 'billing.bank_transfer_sent', entityType: 'billing', summary: (req) => `Sent bank transfer UTR ${String(req.body?.utr ?? '').slice(0, 30)} for checking` },
+  { method: 'POST', pattern: /^\/api\/billing\/paypal\/capture$/, action: 'billing.paypal', entityType: 'billing', summary: () => 'Paid for a plan by PayPal' },
   { method: 'POST', pattern: /^\/api\/billing\/cancel$/, action: 'billing.cancel', entityType: 'billing', summary: () => 'Turned off plan renewal' },
   { method: 'PUT', pattern: new RegExp(`^/api/buyers/${UUID}/credit-limit$`), action: 'buyer.credit_limit', entityType: 'buyer', summary: (req) => (req.body?.creditLimitUsd ? `Set a buyer credit limit of USD ${req.body.creditLimitUsd}` : 'Removed a buyer credit limit') },
 ];

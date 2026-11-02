@@ -27,6 +27,7 @@ import {
   type RazorpayClient,
   type RazorpaySubscription,
 } from './razorpay.js';
+import { isPlatformAdmin, paymentOptions } from './providers.js';
 
 const DAY_MS = 86_400_000;
 
@@ -43,7 +44,10 @@ type SubscriptionRow = {
   pending_subscription_id: string | null;
   pending_plan_key: PlanKey | null;
   pending_cycle: BillingCycle | null;
+  payment_method: PaymentProvider | null;
 };
+
+export type PaymentProvider = 'razorpay' | 'bank_transfer' | 'paypal';
 
 export type Access = 'trial' | 'active' | 'grace' | 'lapsed';
 
@@ -113,7 +117,7 @@ export async function limitMessage(pool: DbPool, organizationId: string, kind: L
 
 /** Paths that keep working with no plan, so a company can always sign in, pay, and leave. */
 function alwaysAllowed(path: string): boolean {
-  return /^\/api\/(auth|billing|health|workspace)(\/|$)/.test(path);
+  return /^\/api\/(auth|billing|health|workspace|platform)(\/|$)/.test(path);
 }
 
 const READ = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -182,7 +186,7 @@ async function activate(
   await pool.query(
     `UPDATE organization_subscriptions
      SET plan_key = $2, billing_cycle = $3, status = $4, current_period_start = $5, current_period_end = $6,
-         razorpay_subscription_id = $7, cancel_at_period_end = false,
+         razorpay_subscription_id = $7, cancel_at_period_end = false, payment_method = 'razorpay',
          pending_subscription_id = NULL, pending_plan_key = NULL, pending_cycle = NULL, updated_at = now()
      WHERE organization_id = $1`,
     [organizationId, planKey, cycle, subscription.status === 'authenticated' ? 'authenticated' : 'active', start, end, subscription.id],
@@ -193,21 +197,57 @@ async function activate(
   }
 }
 
-async function recordPayment(
+/**
+ * Makes a plan paid by bank transfer or PayPal the company's plan for one period. Paying again for the same
+ * plan before it ends adds a period after the current one. Any Razorpay renewal is stopped, so the company
+ * is not charged twice.
+ */
+export async function activateOnePeriod(
+  pool: DbPool,
+  razorpay: RazorpayClient,
+  organizationId: string,
+  planKey: PlanKey,
+  cycle: BillingCycle,
+  provider: Exclude<PaymentProvider, 'razorpay'>,
+): Promise<{ start: Date; end: Date }> {
+  const row = await loadSubscription(pool, organizationId);
+  const now = new Date();
+  const extends_ = row.plan_key === planKey && row.billing_cycle === cycle && row.current_period_end !== null && row.current_period_end > now;
+  const start = extends_ ? row.current_period_end! : now;
+  const end = addCycle(start, cycle);
+  await pool.query(
+    `UPDATE organization_subscriptions
+     SET plan_key = $2, billing_cycle = $3, status = 'active', current_period_start = $4, current_period_end = $5,
+         payment_method = $6, razorpay_subscription_id = NULL, cancel_at_period_end = false,
+         pending_subscription_id = NULL, pending_plan_key = NULL, pending_cycle = NULL, updated_at = now()
+     WHERE organization_id = $1`,
+    [organizationId, planKey, cycle, extends_ ? row.current_period_start ?? now : now, end, provider],
+  );
+  if (row.razorpay_subscription_id) {
+    await razorpay
+      .cancelSubscription(row.razorpay_subscription_id, false)
+      .catch((error) => console.error(`Could not stop Razorpay renewal ${row.razorpay_subscription_id}:`, (error as Error).message));
+  }
+  return { start, end };
+}
+
+export async function recordPayment(
   pool: DbPool,
   organizationId: string,
   payment: { id: string; amount: number; status: string; method?: string; invoice_id?: string | null; created_at?: number },
   subscriptionId: string,
   planKey: string,
   cycle: string | null,
+  provider: PaymentProvider = 'razorpay',
+  currency: 'INR' | 'USD' = 'INR',
 ) {
   await pool.query(
     `INSERT INTO subscription_payments (razorpay_payment_id, organization_id, razorpay_subscription_id, razorpay_invoice_id, plan_key,
-       billing_cycle, amount_paise, status, method, paid_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       billing_cycle, amount_paise, status, method, paid_at, provider, currency)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      ON CONFLICT (razorpay_payment_id) DO UPDATE SET status = EXCLUDED.status`,
     [payment.id, organizationId, subscriptionId, payment.invoice_id ?? null, planKey, cycle, payment.amount, payment.status, payment.method ?? '',
-      toDate(payment.created_at) ?? new Date()],
+      toDate(payment.created_at) ?? new Date(), provider, currency],
   );
 }
 
@@ -217,8 +257,8 @@ export async function billingSummary(pool: DbPool, organizationId: string, inclu
   const [usage, history] = await Promise.all([
     usageOf(pool, organizationId),
     includeHistory
-      ? pool.query<{ razorpay_payment_id: string; plan_key: string; billing_cycle: string | null; amount_paise: number; status: string; method: string; paid_at: Date }>(
-          `SELECT razorpay_payment_id, plan_key, billing_cycle, amount_paise, status, method, paid_at FROM subscription_payments
+      ? pool.query<{ razorpay_payment_id: string; plan_key: string; billing_cycle: string | null; amount_paise: number; status: string; method: string; paid_at: Date; provider: PaymentProvider; currency: 'INR' | 'USD' }>(
+          `SELECT razorpay_payment_id, plan_key, billing_cycle, amount_paise, status, method, paid_at, provider, currency FROM subscription_payments
            WHERE organization_id = $1 ORDER BY paid_at DESC LIMIT 50`,
           [organizationId],
         )
@@ -234,15 +274,19 @@ export async function billingSummary(pool: DbPool, organizationId: string, inclu
     trialEndsAt: row.plan_key === 'trial' ? row.trial_ends_at.toISOString() : null,
     currentPeriodEnd: row.current_period_end?.toISOString() ?? null,
     cancelAtPeriodEnd: row.cancel_at_period_end,
+    paymentMethod: row.payment_method,
     limits: plan.limits,
     features: plan.features,
     usage,
-    paymentsEnabled: razorpayConfigured(),
+    paymentOptions: paymentOptions(),
+    paymentsEnabled: Object.values(paymentOptions()).some(Boolean),
     payments: history.rows.map((payment) => ({
       id: payment.razorpay_payment_id,
       planKey: payment.plan_key,
       cycle: payment.billing_cycle,
-      amountInr: payment.amount_paise / 100,
+      amount: payment.amount_paise / 100,
+      currency: payment.currency,
+      provider: payment.provider,
       status: payment.status,
       method: payment.method,
       paidAt: payment.paid_at.toISOString(),
@@ -267,12 +311,13 @@ export function registerBillingRoutes(app: Express, pool: DbPool, fetcher: typeo
   };
 
   app.get('/api/billing/plans', (_req, res) => {
-    res.json({ plans: publicPlans(), gstRate: 0.18, trialDays: TRIAL_DAYS, paymentsEnabled: razorpayConfigured() });
+    const options = paymentOptions();
+    res.json({ plans: publicPlans(), gstRate: 0.18, trialDays: TRIAL_DAYS, paymentOptions: options, paymentsEnabled: Object.values(options).some(Boolean) });
   });
 
   app.get('/api/billing', requireUser, asyncHandler(async (_req, res) => {
     const user = currentUser(res);
-    return res.json(await billingSummary(pool, user.organizationId, user.role === 'admin'));
+    return res.json({ ...(await billingSummary(pool, user.organizationId, user.role === 'admin')), platformAdmin: isPlatformAdmin(user.email) });
   }));
 
   /** Starts a Razorpay subscription for the chosen plan. The browser opens Razorpay Checkout with it. */
@@ -283,7 +328,10 @@ export function registerBillingRoutes(app: Express, pool: DbPool, fetcher: typeo
     if (!plan || !isCycle(cycle)) return res.status(400).json({ error: 'Choose a plan and monthly or yearly billing.' });
     const current = await loadSubscription(pool, user.organizationId);
     const { access } = accessOf(current);
-    if (current.plan_key === plan.key && current.billing_cycle === cycle && (access === 'active' || access === 'grace') && !current.cancel_at_period_end) {
+    if (
+      current.payment_method === 'razorpay' && current.plan_key === plan.key && current.billing_cycle === cycle &&
+      (access === 'active' || access === 'grace') && !current.cancel_at_period_end
+    ) {
       return res.status(409).json({ error: `You are already on ${plan.name} (${cycle}).` });
     }
     const usage = await usageOf(pool, user.organizationId);
@@ -345,6 +393,9 @@ export function registerBillingRoutes(app: Express, pool: DbPool, fetcher: typeo
   app.post('/api/billing/cancel', requireAdmin, asyncHandler(async (_req, res) => {
     const user = currentUser(res);
     const row = await loadSubscription(pool, user.organizationId);
+    if (row.payment_method === 'bank_transfer' || row.payment_method === 'paypal') {
+      return res.status(409).json({ error: 'This plan was paid for one period and does not renew on its own, so there is nothing to cancel.' });
+    }
     if (!row.razorpay_subscription_id || row.plan_key === 'trial') return res.status(409).json({ error: 'There is no paid plan to cancel.' });
     if (row.cancel_at_period_end) return res.json(await billingSummary(pool, user.organizationId, true));
     try {

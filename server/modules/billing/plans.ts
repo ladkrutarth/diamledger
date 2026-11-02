@@ -33,6 +33,9 @@ export type Plan = {
   audience: string;
   monthlyInr: number;
   yearlyInr: number;
+  /** For customers outside India paying by PayPal. Export of services, so no GST. */
+  monthlyUsd: number;
+  yearlyUsd: number;
   limits: { users: number; invoicesPerMonth: number | null; clients: number | null };
   features: Feature[];
   highlights: string[];
@@ -45,6 +48,8 @@ export const PLANS: Plan[] = [
     audience: 'A small exporter starting out',
     monthlyInr: 1499,
     yearlyInr: 14990,
+    monthlyUsd: 19,
+    yearlyUsd: 190,
     limits: { users: 2, invoicesPerMonth: 30, clients: null },
     features: [],
     highlights: [
@@ -61,6 +66,8 @@ export const PLANS: Plan[] = [
     audience: 'An exporter with an accountant',
     monthlyInr: 3999,
     yearlyInr: 39990,
+    monthlyUsd: 49,
+    yearlyUsd: 490,
     limits: { users: 5, invoicesPerMonth: 150, clients: null },
     features: ['advanced_tax', 'ai', 'outside_accountants'],
     highlights: [
@@ -78,6 +85,8 @@ export const PLANS: Plan[] = [
     audience: 'A larger exporter preparing for tax audit',
     monthlyInr: 7999,
     yearlyInr: 79990,
+    monthlyUsd: 99,
+    yearlyUsd: 990,
     limits: { users: 15, invoicesPerMonth: null, clients: null },
     features: ['advanced_tax', 'audit', 'ai', 'outside_accountants'],
     highlights: [
@@ -93,6 +102,8 @@ export const PLANS: Plan[] = [
     audience: 'A chartered accountant firm serving exporters',
     monthlyInr: 2499,
     yearlyInr: 24990,
+    monthlyUsd: 29,
+    yearlyUsd: 290,
     limits: { users: 5, invoicesPerMonth: 30, clients: 25 },
     features: ['practice', 'ai'],
     highlights: [
@@ -111,6 +122,8 @@ export const TRIAL_PLAN: Plan = {
   audience: 'Every feature for 14 days',
   monthlyInr: 0,
   yearlyInr: 0,
+  monthlyUsd: 0,
+  yearlyUsd: 0,
   limits: { users: 15, invoicesPerMonth: null, clients: 25 },
   features: ['advanced_tax', 'audit', 'ai', 'outside_accountants', 'practice'],
   highlights: [],
@@ -139,11 +152,17 @@ export function priceFor(plan: Plan, cycle: BillingCycle) {
   return { baseInr: base, gstInr: gst, totalInr: base + gst, totalPaise: (base + gst) * 100 };
 }
 
+/** The PayPal price in US dollars. Billed to a customer outside India, it is an export of services: no GST. */
+export function usdPriceFor(plan: Plan, cycle: BillingCycle): number {
+  return cycle === 'monthly' ? plan.monthlyUsd : plan.yearlyUsd;
+}
+
 /** Each plan with its prices, as shown on the pricing page. */
 export function publicPlans() {
   return PLANS.map((plan) => ({
     ...plan,
     prices: { monthly: priceFor(plan, 'monthly'), yearly: priceFor(plan, 'yearly') },
+    pricesUsd: { monthly: usdPriceFor(plan, 'monthly'), yearly: usdPriceFor(plan, 'yearly') },
     yearlySavingInr: plan.monthlyInr * 12 - plan.yearlyInr,
   }));
 }

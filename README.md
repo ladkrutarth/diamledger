@@ -38,7 +38,9 @@ The default sample exporter is **xyz LLC**.
 
 | Feature | What it does |
 | --- | --- |
-| Invoice workspace | Live A4 preview, PDF export, duplicate an invoice into a new draft |
+| Invoice editor | Six sections (parties, shipment, goods, packing, bank, compliance) beside a live A4 preview. Every field the invoice prints can be edited; a saved buyer fills the consignee |
+| Checks before issuing | IEC, GSTIN, PAN, AD code, SWIFT, and IFSC formats; PAN and state code against the GSTIN; KP certificate for rough; LUT ARN with the LUT clause; 8-digit HS codes; certificates for single stones and used twice. Errors block issuing and are marked on the field; warnings are listed when you issue |
+| Working safely | One toolbar (open, new, duplicate, save, issue, PDF); unsaved-changes marker and a warning before leaving; ⌘S / Ctrl+S saves; issued invoices are locked, and Duplicate starts a new draft |
 | Numbering | Automatic per Indian financial year, such as `EXP/2026-27/0001`, with your own prefix |
 | Status | Draft → Issued → Paid, or Cancelled. Issued invoices are locked |
 | Accounts export | Tally Prime XML and SAP payload, built in the browser |
@@ -59,23 +61,25 @@ The default sample exporter is **xyz LLC**.
 
 ### Tax desk
 
-| Desk | What it does |
-| --- | --- |
-| Calendar | GSTR-1, GSTR-3B, LUT, realization, and refund due dates |
-| Filing check | GSTR-1 table 6A and e-invoice readiness for each issued invoice |
-| Export register | Month register with shipping bills and the CA's review; GST pack download |
-| Purchases & ITC | Purchase register (imports by Bill of Entry, local purchases by GST invoice). Import GSTR-2B and see credit matched, at risk, and not claimed |
-| Bank match | Import a statement (CSV, or PDF/image read by AI) and match credits to invoices |
-| Tally match | Import a Tally Day Book (XML or CSV) and compare sales, receipts, and purchases with the app |
-| Realization | FEMA realization deadline per export, and e-BRC import |
-| Exchange gain / loss | Invoice rate vs bank rate per receipt, exported to Tally |
-| Exchange rates | Daily reference rates, plus your own rates |
-| GST refund | Refund statement for zero-rated exports under LUT |
-| Payments abroad / TDS | Brokerage, freight, and fees paid outside India: TDS, treaty rate, and the Form 15CA part (A, C, or D) with 15CB when needed |
-| Audit checks | Gaps in invoice numbers, edits after a closed month was reopened, unusual rates per carat, unmatched payments, round amounts, Sunday invoices, missing shipping bills, foreign payments without TDS or 15CA |
-| Tax audit (3CD) | Turnover, clauses 23, 34, 35, and 44, exchange differences, and receivables past the realization period, with one zip download |
-| Notices | GST, Income Tax, Customs, DGFT, and RBI notices with reply deadlines, linked invoices, and a reply drafted from your own records |
-| Closed months | The CA signs off a month; nothing dated in it can change until it is reopened. Financial year pack download |
+Fifteen desks in five groups, chosen from a side menu. Desks not on the company's plan show a lock and what unlocks them.
+
+| Group | Desk | What it does |
+| --- | --- | --- |
+| Overview | Due dates | GSTR-1, GSTR-3B, LUT, realization, and refund deadlines |
+| GST | GSTR-1 filing check | Table 6A and e-invoice readiness for each issued invoice |
+| | Export register | Month register with shipping bills and the CA's review; GST pack download |
+| | Purchases & ITC | Purchase register (imports by Bill of Entry, local purchases by GST invoice). Import GSTR-2B and see credit matched, at risk, and not claimed |
+| | GST refund | Refund statement for zero-rated exports under LUT |
+| Bank & forex | Bank match | Import a statement (CSV, or PDF/image read by AI) and match credits to invoices |
+| | Tally match | Import a Tally Day Book (XML or CSV) and compare sales, receipts, and purchases with the app |
+| | FEMA realization | Realization deadline per export, and e-BRC import |
+| | Exchange gain / loss | Invoice rate vs bank rate per receipt, exported to Tally |
+| | Exchange rates | Daily reference rates, plus your own rates |
+| Income tax & audit | Payments abroad / TDS | Brokerage, freight, and fees paid outside India: TDS, treaty rate, and the Form 15CA part (A, C, or D) with 15CB when needed |
+| | Audit checks | Gaps in invoice numbers, edits after a closed month was reopened, unusual rates per carat, unmatched payments, round amounts, Sunday invoices, missing shipping bills, foreign payments without TDS or 15CA |
+| | Tax audit (3CD) | Turnover, clauses 23, 34, 35, and 44, exchange differences, and receivables past the realization period, with one zip download |
+| Notices & sign-off | Notices | GST, Income Tax, Customs, DGFT, and RBI notices with reply deadlines, linked invoices, and a reply drafted from your own records |
+| | Closed months | The CA signs off a month; nothing dated in it can change until it is reopened. Financial year pack download |
 
 ### Working with the accountant
 
@@ -113,7 +117,7 @@ flowchart TB
     app --> core["core/: db, http guards, security,<br/>rate limits, monitoring"]
     app --> modules["modules/: auth, invoices, company,<br/>collections, stock, banking, tax,<br/>accountant, activity"]
     app --> assistant["assistant/: agent, read-only tools, month review"]
-    app --> billing["modules/billing: plans, subscription guard"]
+    app --> billing["modules/billing: plans, payment methods,<br/>subscription guard"]
     modules --> ai["ai/: callModel with budget,<br/>timeout, and usage log"]
     assistant --> ai
   end
@@ -123,8 +127,10 @@ flowchart TB
   ai --> llm["Gemini or Hugging Face"]
   modules --> smtp["SMTP mail server"]
   modules --> rates["Reference rate feed"]
-  billing --> razorpay["Razorpay: checkout, subscriptions, webhooks"]
+  billing --> razorpay["Razorpay: UPI, cards, net banking"]
+  billing --> paypal["PayPal: orders in USD"]
   spa -- "Checkout popup" --> razorpay
+  spa -- "Redirect and return" --> paypal
   cron["Vercel Cron, daily"] -.-> modules
   app -.-> sentry["Sentry, optional"]
   spa -.-> sentry
@@ -197,7 +203,7 @@ Code is grouped by feature. Each server module owns its routes, SQL, and rules; 
 │   │   │                        forex, rates, refunds, TDS, audit checks,
 │   │   │                        3CD pack, notices, closed months
 │   │   ├── accountant/          Multi-company workspace, requests, practice
-│   │   ├── billing/             Plans and prices, Razorpay, subscription guard
+│   │   ├── billing/             Plans, Razorpay, bank transfer, PayPal, subscription guard
 │   │   └── activity/            Activity log
 │   │
 │   ├── assistant/               Tool-calling agent, read-only tools, month review
@@ -209,6 +215,7 @@ Code is grouped by feature. Each server module owns its routes, SQL, and rules; 
 │   ├── api/client.ts            Every call to /api, and response types
 │   ├── components/              Shared UI: buttons, cards, tables, form fields
 │   ├── features/                One folder per area, matching the server
+│   │   ├── invoices/editor/     Invoice editor: sections, line items, toolbar, checks
 │   │   ├── auth/  company/  buyers/  invoices/  collections/
 │   │   ├── dashboard/  diamonds/  tax/  accountant/  assistant/  billing/
 │   ├── utils/                   PDF, Tally XML, SAP, amount in words
@@ -235,7 +242,6 @@ Code is grouped by feature. Each server module owns its routes, SQL, and rules; 
 | Activity | `modules/activity` | `features/company` | `/api/audit` |
 | Plan & billing | `modules/billing` | `features/billing` | `/api/billing/*` |
 | Assistant | `assistant/` | `features/assistant` | `/api/assistant/*` |
-
 
 ## Data model
 
@@ -398,6 +404,9 @@ Open [http://localhost:3000](http://localhost:3000) and sign in with the demo ac
 | `CRON_SECRET` | | Bearer token Vercel Cron sends to `/api/cron/rates` |
 | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | | Razorpay API keys. Without them plans are shown but checkout is off |
 | `RAZORPAY_WEBHOOK_SECRET` | | Secret of the Razorpay webhook pointed at `/api/billing/webhook` |
+| `BILLING_BANK_ACCOUNT_NAME`, `BILLING_BANK_NAME`, `BILLING_BANK_ACCOUNT_NUMBER`, `BILLING_BANK_IFSC`, `BILLING_BANK_BRANCH`, `BILLING_BANK_ACCOUNT_TYPE`, `BILLING_GSTIN` | | The account plan payments by bank transfer go to. On when the number and IFSC are set |
+| `PLATFORM_ADMIN_EMAILS` | | Comma-separated emails of the people who approve bank transfers |
+| `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_ENV` | | PayPal for companies outside India; `PAYPAL_ENV` is `sandbox` (default) or `live` |
 | `MIGRATE_ON_START` | | `false` skips migrations at start-up |
 | `SEED_DEMO_USER` | | `true` creates the demo account in production |
 | `VITE_SHOW_DEMO_LOGIN` | | `true` shows demo credentials on the sign-in page. Build time |
@@ -423,6 +432,7 @@ Schema changes live in `db/migrations` as numbered SQL files. Each file runs onc
 | `009` | Exchange rates, activity log, parcels, buyer portal |
 | `010` | Purchases and GSTR-2B, stock kinds, requests, notices, payments abroad, Tally vouchers, practice, buyer credit limits |
 | `011` | Subscriptions, Razorpay plans, plan payments, webhook events, and when each invoice was issued |
+| `012` | Payment method per plan, bank transfer requests, PayPal orders, and payment currency |
 
 Pending migrations run at start-up. To run them as a release step instead, set `MIGRATE_ON_START=false` and run `npm run migrate`.
 
@@ -488,7 +498,7 @@ Counters are stored in PostgreSQL, so limits hold across serverless instances. T
 | Tally import | 30 per hour per user |
 | Assistant question / month review | 30 / 10 per hour per user |
 | Buyer portal | 120 per 15 minutes per IP |
-| Plan checkout | 20 per hour per user |
+| Plan checkout / PayPal order / bank transfer request | 20 / 20 / 10 per hour per user |
 
 ---
 
@@ -521,7 +531,23 @@ Server tests start a temporary PostgreSQL (`embedded-postgres`) and drive the re
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the type check, the tests against a PostgreSQL 16 service, and the build on every push to `main` and every pull request
 
-### Turning on payments
+### Ways to pay
+
+| Method | Through | Renews | Turn it on with |
+| --- | --- | --- | --- |
+| UPI | Razorpay UPI AutoPay | Automatically | Razorpay keys |
+| Debit or credit card | Razorpay (recurring card) | Automatically | Razorpay keys |
+| Net banking | Razorpay e-mandate | Automatically | Razorpay keys |
+| Bank transfer (NEFT / RTGS / IMPS) | Your bank account | One period at a time | `BILLING_BANK_*` and `PLATFORM_ADMIN_EMAILS` |
+| PayPal (outside India, USD) | PayPal Orders | One period at a time | `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET` |
+
+Card numbers, UPI PINs, and bank passwords are entered on Razorpay's or PayPal's own page and never reach this server, so the app stays out of PCI DSS scope. Only payment IDs, amounts, and the bank transfer UTR are stored.
+
+- **Bank transfer:** the admin chooses a plan and gets your account details, the amount with GST, and a reference code (`DX-XXXXXX`) for the remarks. After paying, they enter the UTR. A site operator (an email in `PLATFORM_ADMIN_EMAILS`) sees it on **Bank transfers**, checks the credit in the bank statement, and approves it, which switches the plan on for one period, or rejects it with a reason the company sees. A UTR can only be used once.
+- **PayPal:** the admin is sent to PayPal to pay in US dollars and comes back to the billing page, which captures the payment. The plan starts only if PayPal confirms the full amount. Create the app at developer.paypal.com; use `PAYPAL_ENV=sandbox` and sandbox accounts to test. PayPal does not process payments between two Indian parties, so offer it to companies outside India.
+- **Paying one period at a time:** paying again for the same plan before it ends adds a period after the current one. Switching to a one-period method stops any Razorpay renewal, so nobody is charged twice.
+
+### Turning on Razorpay
 
 1. Create a [Razorpay](https://razorpay.com) account, and under **Account & Settings → API keys** create test keys (`rzp_test_...`).
 2. Set `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`.
@@ -554,7 +580,7 @@ sequenceDiagram
   API->>DB: Update status, period, and payment history
 ```
 
-Not covered yet: GST tax invoices for the subscription itself (Razorpay sends a payment receipt; issue a GST invoice from your own books, or turn on Razorpay Invoices), coupons, and refunds, which are made from the Razorpay dashboard.
+Not covered yet: emailing the operator when a bank transfer is waiting, GST tax invoices for the subscription itself (Razorpay sends a payment receipt; issue a GST invoice from your own books, or turn on Razorpay Invoices), coupons, and refunds, which are made from the Razorpay dashboard.
 
 ---
 

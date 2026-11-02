@@ -3,17 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   FileSpreadsheet,
-  Sparkles,
   Layers,
   Send,
-  ShieldCheck,
-  Download,
   Gem,
   Wallet,
-  Lock,
   Bot,
   LayoutDashboard,
   ScrollText,
@@ -31,7 +27,10 @@ import {
 } from 'lucide-react';
 import { InvoiceState } from './types/invoice';
 import { A1005InvoicePreview } from './features/invoices/A1005InvoicePreview';
-import { DataEntryPanel } from './features/invoices/DataEntryPanel';
+import { InvoiceEditor } from './features/invoices/editor/InvoiceEditor';
+import { InvoiceToolbar } from './features/invoices/editor/InvoiceToolbar';
+import { checkInvoice, invoiceTotals } from './features/invoices/editor/invoiceChecks';
+import { MUMBAI_TO_NY_PRESET, SURAT_TO_ANTWERP_PRESET, SURAT_TO_DUBAI_PRESET } from './data/sampleInvoices';
 import { AiManifestParser } from './features/invoices/AiManifestParser';
 import { AssistantPanel } from './features/assistant/AssistantPanel';
 import { ErpSyncPanel } from './features/invoices/ErpSyncPanel';
@@ -39,7 +38,6 @@ import { EmailDispatchPanel } from './features/invoices/EmailDispatchPanel';
 import { exportElementToPdf } from './utils/pdfGenerator';
 import { LoginPage } from './features/auth/LoginPage';
 import { PaymentsPanel } from './features/invoices/PaymentsPanel';
-import { StatusBadge } from './components/StatusBadge';
 import { InvoicesPage } from './features/invoices/InvoicesPage';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { RemindersPage } from './features/collections/RemindersPage';
@@ -53,6 +51,7 @@ import { DiamondsPage } from './features/diamonds/DiamondsPage';
 import { PracticePage } from './features/accountant/PracticePage';
 import { RequestsPage } from './features/accountant/RequestsPage';
 import { BillingPage } from './features/billing/BillingPage';
+import { BankTransfersAdmin } from './features/billing/BankTransfersAdmin';
 import { InvoiceTaxPanel } from './features/invoices/InvoiceTaxPanel';
 import {
   api,
@@ -74,7 +73,7 @@ import { applyBuyer, buildNewInvoice, buyerFromConsignee, duplicateInvoice } fro
 
 type View =
   | 'workspace' | 'dashboard' | 'invoices' | 'reminders' | 'buyers' | 'company' | 'team' | 'account' | 'tax' | 'activity' | 'diamonds'
-  | 'requests' | 'practice' | 'billing';
+  | 'requests' | 'practice' | 'billing' | 'bank-transfers';
 type Module = 'editor' | 'payments' | 'erp' | 'email' | 'tax';
 
 function readResetToken(): string | null {
@@ -102,6 +101,10 @@ export default function App() {
   const [saveMessage, setSaveMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [companies, setCompanies] = useState<WorkspaceCompany[]>([]);
   const [billing, setBilling] = useState<BillingSummary | null>(null);
+  /** The invoice as last loaded or saved, to tell whether there are unsaved changes. */
+  const [savedSnapshot, setSavedSnapshot] = useState('');
+  /** After a failed attempt to issue, show "missing" messages on every field. */
+  const [showAllChecks, setShowAllChecks] = useState(false);
 
   const refreshBilling = useCallback(() => {
     api<BillingSummary>('/api/billing')
@@ -115,6 +118,23 @@ export default function App() {
   const canUseTaxDesk = user?.role === 'admin' || user?.role === 'tax' || user?.role === 'ca';
   const hasClients = companies.some((company) => !company.home);
   const locked = status !== 'draft' || !canWrite;
+  const invoiceIssues = useMemo(() => checkInvoice(invoice), [invoice]);
+  const totals = useMemo(() => invoiceTotals(invoice), [invoice]);
+  const dirty = useMemo(() => !locked && JSON.stringify(invoice) !== savedSnapshot, [invoice, savedSnapshot, locked]);
+
+  /** Asks before throwing away unsaved edits. True when it is fine to go on. */
+  const confirmDiscard = () => !dirty || window.confirm('This draft has unsaved changes. Discard them?');
+
+  // Warn before closing the tab with unsaved edits.
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
 
   useEffect(() => {
     if (resetToken) {
@@ -156,6 +176,11 @@ export default function App() {
     else setBilling(null);
   }, [user?.id, user?.organizationId, refreshBilling]);
 
+  // Coming back from PayPal lands on /?billing=...; open the billing page, which finishes the payment.
+  useEffect(() => {
+    if (user && new URLSearchParams(window.location.search).has('billing')) setView('billing');
+  }, [user?.id]);
+
   const switchCompany = async (organizationId: string) => {
     try {
       const result = await api<{ user: AuthUser }>('/api/workspace/switch', sendJson('POST', { organizationId }));
@@ -188,7 +213,11 @@ export default function App() {
     api<Company>('/api/company')
       .then((result) => {
         setCompany(result);
-        if (!invoiceId) setInvoice(buildNewInvoice(result.profile));
+        if (!invoiceId) {
+          const fresh = buildNewInvoice(result.profile);
+          setInvoice(fresh);
+          setSavedSnapshot(JSON.stringify(fresh));
+        }
       })
       .catch(() => setCompany(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -198,6 +227,8 @@ export default function App() {
     setInvoice(record.invoice);
     setInvoiceId(record.id);
     setStatus(record.status);
+    setSavedSnapshot(JSON.stringify(record.invoice));
+    setShowAllChecks(false);
   };
 
   const editInvoice = (next: InvoiceState | ((prev: InvoiceState) => InvoiceState)) => {
@@ -258,10 +289,23 @@ export default function App() {
   };
 
   const changeStatus = async (next: 'issued' | 'cancelled') => {
-    const warnings = next === 'issued' ? await creditWarnings() : [];
+    if (next === 'issued') {
+      const blocking = invoiceIssues.filter((issue) => issue.severity === 'error');
+      if (blocking.length) {
+        setShowAllChecks(true);
+        setActiveModule('editor');
+        setSaveMessage({
+          tone: 'error',
+          text: `Fix ${blocking.length} thing${blocking.length === 1 ? '' : 's'} before issuing. They are marked in red; the first is: ${blocking[0].message}`,
+        });
+        return;
+      }
+    }
+    const review = next === 'issued' ? invoiceIssues.filter((issue) => issue.severity === 'warning').map((issue) => issue.message) : [];
+    const warnings = next === 'issued' ? [...(await creditWarnings()), ...review.slice(0, 6)] : [];
     const question =
       next === 'issued'
-        ? `${warnings.length ? `Before you ship:\n- ${warnings.join('\n- ')}\n\n` : ''}Issue this invoice? It will be locked and can no longer be edited.`
+        ? `${warnings.length ? `Please check:\n- ${warnings.join('\n- ')}${review.length > 6 ? `\n- and ${review.length - 6} more` : ''}\n\n` : ''}Issue this invoice? It will be locked and can no longer be edited.`
         : 'Cancel this invoice? A cancelled invoice cannot be reopened.';
     if (!window.confirm(question)) return;
 
@@ -281,8 +325,23 @@ export default function App() {
     }
   };
 
+  // Ctrl+S / Cmd+S saves the draft while the editor is open.
+  const saveRef = React.useRef(handleSaveInvoice);
+  saveRef.current = handleSaveInvoice;
+  useEffect(() => {
+    if (view !== 'workspace' || locked) return;
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        saveRef.current();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [view, locked]);
+
   const handleOpenInvoice = async (id: string) => {
-    if (!id) return;
+    if (!id || !confirmDiscard()) return;
     setSaveMessage(null);
     try {
       loadRecord(await api<InvoiceRecord>(`/api/invoices/${id}`));
@@ -296,14 +355,17 @@ export default function App() {
     setInvoice(next);
     setInvoiceId(null);
     setStatus('draft');
+    setSavedSnapshot(JSON.stringify(next));
+    setShowAllChecks(false);
     setActiveModule('editor');
     setSaveMessage(message ? { tone: 'ok', text: message } : null);
     setView('workspace');
   };
 
-  const handleNewInvoice = () => startDraft(buildNewInvoice(company?.profile ?? null), null);
+  const handleNewInvoice = () => confirmDiscard() && startDraft(buildNewInvoice(company?.profile ?? null), null);
 
   const handleDuplicate = () =>
+    confirmDiscard() &&
     startDraft(duplicateInvoice(invoice), 'Copied into a new draft. It gets a new number when you save.');
 
   const handlePickBuyer = (buyerId: string) => {
@@ -425,6 +487,9 @@ export default function App() {
           ? ([['activity', 'Activity', <History className="w-4 h-4" />]] as Array<[View, string, React.ReactNode]>)
           : []),
         ['billing', 'Plan & billing', <CreditCard className="w-4 h-4" />],
+        ...(billing?.platformAdmin
+          ? ([['bank-transfers', 'Bank transfers', <Landmark className="w-4 h-4" />]] as Array<[View, string, React.ReactNode]>)
+          : []),
         ['account', 'Account', <CircleUser className="w-4 h-4" />],
       ],
     },
@@ -434,7 +499,7 @@ export default function App() {
   const moduleTabs: Array<[Module, string, React.ReactNode]> = [
     ['editor', 'Details', <FileSpreadsheet className="w-3.5 h-3.5" />],
     ['payments', 'Payments', <Wallet className="w-3.5 h-3.5" />],
-    ['erp', 'Accounts export', <Layers className="w-3.5 h-3.5" />],
+    ['erp', 'Tally / SAP', <Layers className="w-3.5 h-3.5" />],
     ['email', 'Email', <Send className="w-3.5 h-3.5" />],
     ['tax', 'Tax papers', <Landmark className="w-3.5 h-3.5" />],
   ];
@@ -520,35 +585,6 @@ export default function App() {
           <button onClick={handleLogout} className="px-2.5 py-1.5 text-xs font-semibold text-stone-600 hover:text-stone-950">
             Log out
           </button>
-          {view === 'workspace' && canWrite && (
-            <>
-              <button
-                onClick={() => setIsAiParserOpen(true)}
-                disabled={locked}
-                className="hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-stone-700 hover:text-stone-950 disabled:opacity-40"
-              >
-                <Sparkles className="w-3.5 h-3.5" />
-                Read a manifest
-              </button>
-              <button
-                onClick={handleSaveInvoice}
-                disabled={isSaving || locked}
-                className="px-3 py-1.5 text-xs font-semibold text-stone-900 bg-white border border-stone-300 hover:bg-stone-50 rounded-lg disabled:opacity-50"
-              >
-                {isSaving ? 'Saving...' : 'Save'}
-              </button>
-            </>
-          )}
-          {view === 'workspace' && (
-            <button
-              onClick={handleTopDownload}
-              disabled={isDownloading}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-stone-900 hover:bg-stone-800 rounded-lg disabled:opacity-50"
-            >
-              <Download className="w-3.5 h-3.5" />
-              <span>{isDownloading ? 'Preparing...' : 'Download PDF'}</span>
-            </button>
-          )}
         </div>
       </header>
       {billing && (billing.access === 'lapsed' || billing.access === 'grace' || (billing.access === 'trial' && (billing.daysLeft ?? 0) <= 5)) && (
@@ -603,6 +639,8 @@ export default function App() {
           isCharteredAccountant={isCharteredAccountant}
           canWrite={canWrite}
           canManage={isAdmin || user.role === 'tax'}
+          planFeatures={billing?.features}
+          onUpgrade={() => setView('billing')}
           onOpen={handleOpenInvoice}
         />
       )}
@@ -628,6 +666,7 @@ export default function App() {
       )}
       {view === 'account' && <AccountPage user={user} />}
       {view === 'billing' && <BillingPage isAdmin={isAdmin} onChanged={refreshBilling} />}
+      {view === 'bank-transfers' && billing?.platformAdmin && <BankTransfersAdmin />}
       {view === 'requests' && <RequestsPage key={dataVersion} />}
       {view === 'practice' && hasClients && (
         <PracticePage
@@ -640,127 +679,45 @@ export default function App() {
 
       {view === 'workspace' && (
         <>
-          <div className="bg-white text-stone-600 px-6 py-2 flex flex-wrap items-center justify-between gap-2 text-[11px] border-b border-stone-200 shrink-0">
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-              <span className="flex items-center gap-1 font-semibold text-emerald-800">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                Kimberley Process
-              </span>
-              <span>RCMC {invoice.exporter.rcmcNo || '—'}</span>
-              <span>LUT {invoice.shipment.lutNumber || '—'}</span>
-              <span>AD code {invoice.bank.adCode || '—'}</span>
-            </div>
-
-            <div className="flex items-center gap-2 font-medium text-stone-800">
-              <span>{invoice.shipment.portOfLoading.split('(')[0].trim() || 'Loading port'}</span>
-              <span className="text-stone-400">→</span>
-              <span>{invoice.shipment.portOfDischarge.split('(')[0].trim() || 'Discharge port'}</span>
-            </div>
-          </div>
+          <InvoiceToolbar
+            invoiceNumber={invoice.shipment.invoiceNumber}
+            buyerName={invoice.consignee.companyName}
+            route={[invoice.shipment.portOfLoading.split('(')[0].trim(), invoice.shipment.portOfDischarge.split('(')[0].trim()].filter(Boolean).join(' → ')}
+            totals={totals}
+            status={status}
+            dirty={dirty}
+            saving={isSaving}
+            downloading={isDownloading}
+            canWrite={canWrite}
+            canCancel={canCancel}
+            locked={locked}
+            errors={invoiceIssues.filter((issue) => issue.severity === 'error').length}
+            invoices={savedInvoices}
+            currentId={invoiceId}
+            message={saveMessage}
+            onOpen={handleOpenInvoice}
+            onNew={handleNewInvoice}
+            onDuplicate={handleDuplicate}
+            onSave={handleSaveInvoice}
+            onIssue={() => changeStatus('issued')}
+            onCancelInvoice={() => changeStatus('cancelled')}
+            onDownload={handleTopDownload}
+            onReadManifest={() => setIsAiParserOpen(true)}
+            samples={[
+              { key: 'surat', label: 'Surat → Antwerp (polished, LUT)' },
+              { key: 'mumbai', label: 'Mumbai BDB → New York' },
+              { key: 'dubai', label: 'Surat SEZ → Dubai' },
+            ]}
+            onSample={(key) => {
+              const sample = { surat: SURAT_TO_ANTWERP_PRESET, mumbai: MUMBAI_TO_NY_PRESET, dubai: SURAT_TO_DUBAI_PRESET }[key];
+              if (sample && window.confirm('Replace everything in this draft with the sample invoice? Your company details will be replaced too.')) {
+                editInvoice(structuredClone(sample));
+              }
+            }}
+          />
 
           <div className="flex-1 flex overflow-hidden">
             <aside className="w-full md:w-[48%] lg:w-[45%] xl:w-[43%] flex flex-col border-r border-slate-300 bg-white shadow-xs z-10 shrink-0">
-              <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-white">
-                <label htmlFor="saved-invoices" className="text-[11px] font-semibold text-slate-600 shrink-0">
-                  Invoice
-                </label>
-                <select
-                  id="saved-invoices"
-                  value={invoiceId ?? ''}
-                  onChange={(event) => handleOpenInvoice(event.target.value)}
-                  className="flex-1 min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs"
-                >
-                  <option value="">Unsaved draft</option>
-                  {savedInvoices.map((saved) => (
-                    <option key={saved.id} value={saved.id}>
-                      {saved.invoiceNumber} · {saved.status}
-                    </option>
-                  ))}
-                </select>
-                <StatusBadge status={status} />
-                {canWrite && (
-                  <>
-                    <button
-                      onClick={handleNewInvoice}
-                      className="px-2 py-1 text-xs font-semibold rounded-md border border-slate-300 hover:bg-slate-50"
-                    >
-                      New
-                    </button>
-                    <button
-                      onClick={handleDuplicate}
-                      className="px-2 py-1 text-xs font-semibold rounded-md border border-slate-300 hover:bg-slate-50"
-                    >
-                      Duplicate
-                    </button>
-                  </>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-slate-50">
-                <label htmlFor="buyer-picker" className="text-[11px] font-semibold text-slate-600 shrink-0">
-                  Buyer
-                </label>
-                <select
-                  id="buyer-picker"
-                  value=""
-                  disabled={locked || buyers.length === 0}
-                  onChange={(event) => handlePickBuyer(event.target.value)}
-                  className="flex-1 min-w-0 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs disabled:opacity-60"
-                >
-                  <option value="">
-                    {buyers.length === 0 ? 'No saved buyers yet' : 'Fill consignee from a saved buyer...'}
-                  </option>
-                  {buyers.map((buyer) => (
-                    <option key={buyer.id} value={buyer.id}>
-                      {buyer.name}
-                      {buyer.consignee.country ? ` (${buyer.consignee.country})` : ''}
-                    </option>
-                  ))}
-                </select>
-                {canWrite && (
-                  <button
-                    onClick={handleSaveBuyer}
-                    disabled={!invoice.consignee.companyName.trim()}
-                    className="px-2 py-1 text-xs font-semibold rounded-md border border-slate-300 bg-white hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    Save buyer
-                  </button>
-                )}
-                {canWrite && status === 'draft' && (
-                  <button
-                    onClick={() => changeStatus('issued')}
-                    disabled={isSaving}
-                    className="px-2 py-1 text-xs font-semibold rounded-md bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50"
-                  >
-                    Issue
-                  </button>
-                )}
-                {canWrite && canCancel && (
-                  <button
-                    onClick={() => changeStatus('cancelled')}
-                    disabled={isSaving}
-                    className="px-2 py-1 text-xs font-semibold rounded-md border border-red-200 text-red-700 bg-white hover:bg-red-50 disabled:opacity-50"
-                  >
-                    Cancel invoice
-                  </button>
-                )}
-              </div>
-
-              {locked && (
-                <p className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] bg-amber-50 text-amber-900 border-b border-amber-200">
-                  <Lock className="w-3 h-3" />
-                  This invoice is {status} and locked. Use Duplicate to start a new draft from it.
-                </p>
-              )}
-              {saveMessage && (
-                <p
-                  role={saveMessage.tone === 'error' ? 'alert' : 'status'}
-                  className={`px-3 py-1 text-[11px] ${saveMessage.tone === 'ok' ? 'text-emerald-700' : 'text-red-700'}`}
-                >
-                  {saveMessage.text}
-                </p>
-              )}
-
               <div className="flex items-center justify-around border-b border-slate-200 bg-slate-50 text-xs font-semibold p-1">
                 {moduleTabs.map(([key, label, icon]) => (
                   <button
@@ -778,13 +735,18 @@ export default function App() {
 
               <div className="flex-1 overflow-hidden">
                 {activeModule === 'editor' && (
-                  <fieldset disabled={locked} className="h-full min-w-0">
-                    <DataEntryPanel
-                      invoice={invoice}
-                      onChange={editInvoice}
-                      onOpenAiParser={() => setIsAiParserOpen(true)}
-                    />
-                  </fieldset>
+                  <InvoiceEditor
+                    invoice={invoice}
+                    onChange={editInvoice}
+                    issues={invoiceIssues}
+                    showAll={showAllChecks}
+                    locked={locked}
+                    issued={status !== 'draft'}
+                    buyers={buyers}
+                    onPickBuyer={handlePickBuyer}
+                    onSaveBuyer={canWrite ? handleSaveBuyer : undefined}
+                    onReadManifest={locked ? undefined : () => setIsAiParserOpen(true)}
+                  />
                 )}
                 {activeModule === 'payments' && (
                   <PaymentsPanel
