@@ -14,8 +14,6 @@ TRIAL_DAYS = 14
 # Days after a paid period ends before the company becomes read-only, while the bank retries the charge.
 GRACE_DAYS = 3
 
-BillingCycle = Literal["monthly", "yearly"]
-PlanKey = Literal["starter", "growth", "business", "ca_firm"]
 Feature = Literal["advanced_tax", "audit", "ai", "outside_accountants", "practice"]
 
 
