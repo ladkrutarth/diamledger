@@ -356,9 +356,15 @@ def build_router():
             return JSONResponse({"success": False, "error": "Host, Username, and Password are required."}, status_code=400)
         try:
             await request.app.state.options.create_mail_transport(settings).verify()
-        except Exception as error:
-            message = str(error) or "SMTP Connection failed. Verify host, port, and security credentials."
-            return JSONResponse({"success": False, "error": message}, status_code=400)
+        except Exception:
+            log.exception("SMTP verification failed")
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": "SMTP Connection failed. Verify host, port, and security credentials.",
+                },
+                status_code=400,
+            )
         return {"success": True, "message": "SMTP connection verified successfully."}
 
     return router
