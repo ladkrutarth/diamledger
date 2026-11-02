@@ -87,18 +87,6 @@ The default sample exporter is **xyz LLC**.
 | Activity | Every change, with who made it and when; CSV download |
 | Assistant | Answers questions from the company's own data and proposes actions; see [AI](#ai) |
 
-### Subscriptions
-
-| Feature | What it does |
-| --- | --- |
-| Plans | Starter, Growth, Business, and CA Firm, billed monthly or yearly in rupees with 18% GST; see [Plans and pricing](#plans-and-pricing) |
-| Free trial | Every new company gets 14 days with every feature |
-| Payments | Razorpay Checkout (UPI, cards, net banking) with automatic renewal; webhooks keep the plan in step |
-| Limits | Users, issued invoices per month, and client companies for CA firms, checked when you add one |
-| Read-only after expiry | When a trial or paid plan ends (after 3 grace days for a failed renewal), the company can still sign in, view, and download, but not change anything until a plan is paid |
-
----
-
 ## Architecture
 
 The browser runs a React app. Every signed-in screen calls one Express API, which keeps all data for a company in PostgreSQL. PDF, Tally XML, and SAP files are built in the browser. AI calls, email, and file imports run on the server.
