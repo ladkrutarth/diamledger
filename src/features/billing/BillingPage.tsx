@@ -14,6 +14,8 @@ import {
 } from '../../api/client';
 import { Badge, TableHead, cell, useReport } from '../../components/shared';
 import { Card, Field, Notice, Page, dangerButton, primaryButton, secondaryButton } from '../../components/ui';
+import { loadCheckout } from '../../utils/razorpayCheckout';
+import { openTaxInvoice } from './taxInvoiceDocument';
 
 const rupees = (value: number) => `₹${value.toLocaleString('en-IN')}`;
 const dollars = (value: number) => `$${value.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
@@ -33,24 +35,6 @@ const METHODS: Array<{ key: Method; option: keyof PaymentOptions; label: string;
 const RAZORPAY_METHOD: Partial<Record<Method, string>> = { upi: 'upi', card: 'card', netbanking: 'emandate' };
 
 type RazorpayResponse = { razorpay_payment_id: string; razorpay_subscription_id: string; razorpay_signature: string };
-type RazorpayInstance = { open: () => void; on: (event: string, handler: (response: { error?: { description?: string } }) => void) => void };
-declare global {
-  interface Window {
-    Razorpay?: new (options: Record<string, unknown>) => RazorpayInstance;
-  }
-}
-
-/** Loads Razorpay Checkout once. Allowed by the Content Security Policy in server/core/security.ts. */
-function loadCheckout(): Promise<void> {
-  if (window.Razorpay) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Could not load Razorpay Checkout. Check your connection and try again.'));
-    document.body.appendChild(script);
-  });
-}
 
 const ACCESS: Record<BillingSummary['access'], { tone: 'green' | 'amber' | 'red'; label: string }> = {
   trial: { tone: 'amber', label: 'Free trial' },
@@ -452,7 +436,7 @@ export const BillingPage: React.FC<{ isAdmin: boolean; onChanged?: () => void }>
       {current && current.payments.length > 0 && (
         <Card title="Payments">
           <table className="w-full text-sm">
-            <TableHead labels={['Date', 'Plan', 'Amount', 'Paid by', 'Status']} />
+            <TableHead labels={['Date', 'Plan', 'Amount', 'Paid by', 'Status', 'Tax invoice']} />
             <tbody>
               {current.payments.map((payment) => (
                 <tr key={payment.id}>
@@ -467,6 +451,22 @@ export const BillingPage: React.FC<{ isAdmin: boolean; onChanged?: () => void }>
                   </td>
                   <td className={cell}>
                     <Badge tone={payment.status === 'captured' ? 'green' : 'slate'}>{payment.status}</Badge>
+                  </td>
+                  <td className={cell}>
+                    {payment.invoiceId ? (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const problem = await openTaxInvoice(payment.invoiceId!);
+                          if (problem) setError(problem);
+                        }}
+                        className={secondaryButton}
+                      >
+                        {payment.invoiceNumber}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
                   </td>
                 </tr>
               ))}

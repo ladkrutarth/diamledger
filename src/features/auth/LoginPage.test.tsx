@@ -92,4 +92,34 @@ describe('LoginPage', () => {
       }),
     );
   });
+
+  it('asks for the two-step code after the password', async () => {
+    const user = { id: '1', email: 'owner@example.com', role: 'admin' };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        text: async () => JSON.stringify({ twoFactorRequired: true, methods: ['app', 'sms', 'recovery'], phoneHint: '•••• 5678' }),
+      })
+      .mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ user, method: 'app', recoveryCodesLeft: 10 }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const onSuccess = vi.fn();
+
+    render(<LoginPage onSuccess={onSuccess} />);
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'owner@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    expect(await screen.findByText('Enter your sign-in code')).toBeTruthy();
+    expect(onSuccess).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Text a code to •••• 5678 instead' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Code'), { target: { value: '123456' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Verify' }));
+
+    await vi.waitFor(() => expect(onSuccess).toHaveBeenCalledWith(user));
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      '/api/auth/two-factor/verify',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ code: '123456' }) }),
+    );
+  });
 });

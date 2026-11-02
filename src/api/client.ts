@@ -28,6 +28,30 @@ export type AuthUser = {
   organizationName: string;
 };
 
+// ---------- Two-step sign-in ----------
+
+export type TwoFactorMethod = 'app' | 'sms' | 'recovery';
+
+/** /api/auth/login answers this instead of a user when the account has two-step sign-in on. */
+export type TwoFactorChallenge = { twoFactorRequired: true; methods: TwoFactorMethod[]; phoneHint: string | null };
+
+export type LoginResult = { user: AuthUser } | TwoFactorChallenge;
+
+export const needsSecondStep = (result: LoginResult): result is TwoFactorChallenge => 'twoFactorRequired' in result;
+
+export type TwoFactorStatus = {
+  enabled: boolean;
+  app: boolean;
+  phone: string | null;
+  recoveryCodesLeft: number;
+  appAvailable: boolean;
+  smsAvailable: boolean;
+  /** Only right after two-step is turned on or codes are renewed: shown once, never again. */
+  recoveryCodes?: string[] | null;
+};
+
+export type TwoFactorAppSetup = { secret: string; otpauthUrl: string; qrCode: string };
+
 export type InvoiceStatus = 'draft' | 'issued' | 'paid' | 'cancelled';
 
 export type InvoiceSummary = {
@@ -248,7 +272,7 @@ export type AssistantTurn = {
   stepLimitReached: boolean;
 };
 
-export type TeamMember = { id: string; email: string; role: Role; createdAt: string };
+export type TeamMember = { id: string; email: string; role: Role; createdAt: string; twoFactor?: boolean };
 
 export type ExportScheme = 'lut' | 'igst';
 export type TaxDocumentKind = 'shipping_bill' | 'airway_bill' | 'lut';
@@ -613,16 +637,92 @@ export type PortalInvoice = {
   paidUsd: number;
   dueUsd: number;
   overdue: boolean;
+  /** The buyer has reported a bank transfer the exporter has not confirmed yet. */
+  claimPending: boolean;
   invoice: import('../types/invoice').InvoiceState;
+};
+
+/** How a buyer can pay: online through the exporter's Razorpay account (in rupees), and bank transfer. */
+export type PortalPaymentOptions = {
+  online: boolean;
+  methods: Array<'upi' | 'card' | 'netbanking'>;
+  currency: 'INR';
+  rateInr: number | null;
+  rateSource: string | null;
+  testMode: boolean;
+  bankTransfer: boolean;
+};
+
+/** A Razorpay order for paying an invoice; the page opens Checkout with it. */
+export type PortalOrder = {
+  orderId: string;
+  keyId: string;
+  amount: number;
+  currency: 'INR';
+  amountInr: number;
+  amountUsd: number;
+  rateInr: number;
+  rateSource: string;
+  name: string;
+  description: string;
 };
 
 export type PortalView = {
   exporterName: string;
   buyerName: string;
   expiresAt: string;
+  payment: PortalPaymentOptions;
   invoices: PortalInvoice[];
   totals: { invoices: number; dueUsd: number; overdueUsd: number };
 };
+
+// ---------- Buyer payments: the exporter's Razorpay account and incoming payments ----------
+
+export type PaymentGateway =
+  | { connected: false; encryptionReady: boolean }
+  | {
+      connected: true;
+      keyId: string;
+      mode: 'live' | 'test';
+      enabled: boolean;
+      inrRate: number | null;
+      webhookUrl: string;
+      webhookSecretSet: boolean;
+      encryptionReady: boolean;
+      updatedAt: string;
+    };
+
+export type PaymentClaim = {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  buyerName: string;
+  amountUsd: number;
+  paidOn: string;
+  reference: string;
+  payerNote: string;
+  status: 'submitted' | 'confirmed' | 'rejected';
+  reviewNote: string;
+  reviewedAt: string | null;
+  createdAt: string;
+};
+
+export type OnlinePayment = {
+  id: string;
+  invoiceId: string;
+  invoiceNumber: string;
+  buyerName: string;
+  amountUsd: number;
+  amountInr: number;
+  rateInr: number;
+  method: string;
+  razorpayPaymentId: string;
+  recorded: boolean;
+  recordError: string;
+  paidAt: string;
+};
+
+export type IncomingPayments = { claims: PaymentClaim[]; online: OnlinePayment[] };
 
 // ---------- Cash-flow forecast ----------
 
@@ -1002,7 +1102,34 @@ export type BillingSummary = {
     status: string;
     method: string;
     paidAt: string;
+    /** The GST tax invoice for this payment, once issued. */
+    invoiceId: string | null;
+    invoiceNumber: string | null;
   }>;
+};
+
+/** A GST tax invoice for a subscription payment, as issued (frozen). Amounts are in `currency`. */
+export type SubscriptionTaxInvoice = {
+  id: string;
+  invoiceNumber: string;
+  financialYear: string;
+  invoiceDate: string;
+  seller: { name: string; gstin: string; address: string; state: string; stateCode: string };
+  buyer: { name: string; gstin: string; address: string; state: string; stateCode: string; country: string };
+  placeOfSupply: string;
+  reverseCharge: boolean;
+  currency: 'INR' | 'USD';
+  lines: Array<{ description: string; sac: string; quantity: number; taxableValue: number }>;
+  taxableValue: number;
+  cgstRate: number;
+  cgst: number;
+  sgstRate: number;
+  sgst: number;
+  igstRate: number;
+  igst: number;
+  total: number;
+  payment: { id: string; provider: PaymentProvider; method: string; paidAt: string };
+  notes: string[];
 };
 
 export type PaymentProvider = 'razorpay' | 'bank_transfer' | 'paypal';

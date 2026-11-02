@@ -7,7 +7,7 @@ the request pipeline in core/context.py) → /api 404 → error handlers.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -26,15 +26,17 @@ from .core.mailer import SendPasswordResetEmail, send_password_reset_email
 from .core.monitoring import report_error
 from .core.security import BodyLimitMiddleware, BodyTooLarge, SecurityHeadersMiddleware
 from .core.sessions import SessionStore
-from .core.settings import is_production, on_vercel, session_secret
+from .core.sms import SmsSender, TwilioSms
+from .core.settings import cookie_secure, is_production, session_secret
 from .modules.accountant import client_requests, practice, workspace
 from .modules.activity import history
 from .modules.auth import routes as auth_routes
 from .modules.auth import team as team_routes
+from .modules.auth import two_factor
 from .modules.banking import bank, statement_reader, tally_sync
 from .modules.billing import payment_methods
 from .modules.billing import routes as billing_routes
-from .modules.collections import email_dispatch, reminders
+from .modules.collections import email_dispatch, online_payments, reminders
 from .modules.collections.email_dispatch import CreateMailTransport, create_smtp_transport
 from .modules.collections.reminders import DraftReminderText, default_reminder_text
 from .modules.company import buyer_risk, company
@@ -60,6 +62,8 @@ class AppOptions:
     rates_transport: httpx.AsyncBaseTransport | None = None
     razorpay_transport: httpx.AsyncBaseTransport | None = None
     paypal_transport: httpx.AsyncBaseTransport | None = None
+    # Text messages for two-step sign-in codes (Twilio; tests pass a fake).
+    sms: SmsSender = field(default_factory=TwilioSms)
     # Serve the built frontend (dist/) with a single-page-app fallback.
     serve_frontend: Path | None = None
 
@@ -75,7 +79,7 @@ def create_app(pool: Pool, options: AppOptions | None = None) -> FastAPI:
     )
     app.state.pool = pool
     app.state.options = options
-    app.state.sessions = SessionStore(pool, session_secret(), secure=on_vercel())
+    app.state.sessions = SessionStore(pool, session_secret(), secure=cookie_secure())
 
     # Added innermost first: the last one added runs first.
     app.add_middleware(ResponseFinisher)
@@ -85,10 +89,10 @@ def create_app(pool: Pool, options: AppOptions | None = None) -> FastAPI:
     # Order matters where paths overlap: /api/invoices/export before /api/invoices/{id}, and so on within each module.
     feature_modules = (
         health,
-        auth_routes, team_routes, workspace,
+        auth_routes, two_factor, team_routes, workspace,
         company, buyer_risk,
         invoices, payments, dashboard, portal, manifest,
-        email_dispatch, reminders,
+        email_dispatch, reminders, online_payments,
         parcels, stock,
         tax_routes, filing, realization, forex, rates, export_reports, purchases, foreign_payments, audit_checks, audit_pack, notices,
         bank, statement_reader, tally_sync,

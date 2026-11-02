@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from fastapi import Request
 
+from .settings import configured_app_url
+
 Role = Literal["admin", "member", "tax", "ca"]
 ROLES: tuple[Role, ...] = ("admin", "member", "tax", "ca")
 
@@ -101,3 +103,13 @@ def iso(value: datetime | None) -> str | None:
         value = value.replace(tzinfo=timezone.utc)
     value = value.astimezone(timezone.utc)
     return value.strftime("%Y-%m-%dT%H:%M:%S.") + f"{value.microsecond // 1000:03d}Z"
+
+
+def public_base_url(request: Request) -> str:
+    """Where links in emails and redirects point. APP_URL in production (startup refuses to run without
+    it, because the Host header is chosen by the caller); the request's own host only in development."""
+    configured = configured_app_url()
+    if configured:
+        return configured
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
+    return f"{proto}://{request.headers.get('x-forwarded-host') or request.headers.get('host', '')}"

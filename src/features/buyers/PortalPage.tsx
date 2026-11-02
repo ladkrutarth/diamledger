@@ -4,19 +4,23 @@ import { api, errorMessage, type PortalInvoice, type PortalView } from '../../ap
 import { formatUsd } from '../../utils/invoiceDefaults';
 import { A1005InvoicePreview } from '../invoices/A1005InvoicePreview';
 import { Badge, TableHead, cell } from '../../components/shared';
-import { Card, Notice, secondaryButton } from '../../components/ui';
+import { Card, Notice, primaryButton, secondaryButton } from '../../components/ui';
+import { PortalPayPanel } from './PortalPayPanel';
 
-/** What a buyer sees when they open a private portal link. No sign-in; read-only. */
+/** What a buyer sees when they open a private portal link. No sign-in; the buyer can view and pay invoices. */
 export const PortalPage: React.FC<{ token: string }> = ({ token }) => {
   const [view, setView] = useState<PortalView | null>(null);
   const [error, setError] = useState('');
   const [open, setOpen] = useState<PortalInvoice | null>(null);
+  const [paying, setPaying] = useState<PortalInvoice | null>(null);
+  const [message, setMessage] = useState('');
+  const [version, setVersion] = useState(0);
 
   useEffect(() => {
     api<PortalView>(`/api/portal/${encodeURIComponent(token)}`)
       .then(setView)
       .catch((err) => setError(errorMessage(err, 'This link could not be opened.')));
-  }, [token]);
+  }, [token, version]);
 
   return (
     <div className="min-h-screen bg-slate-100 text-stone-800">
@@ -34,6 +38,7 @@ export const PortalPage: React.FC<{ token: string }> = ({ token }) => {
 
       <main className="max-w-6xl mx-auto px-6 py-7 space-y-5">
         {error && <Notice tone="error">{error}</Notice>}
+        {message && <Notice tone="success">{message}</Notice>}
         {!view && !error && <p className="text-sm text-slate-500">Loading...</p>}
 
         {view && (
@@ -79,8 +84,25 @@ export const PortalPage: React.FC<{ token: string }> = ({ token }) => {
                           <td className={`${cell} tabular-nums`}>{formatUsd(invoice.paidUsd)}</td>
                           <td className={`${cell} tabular-nums font-semibold`}>
                             {invoice.dueUsd > 0 ? formatUsd(invoice.dueUsd) : <Badge tone="green">Paid</Badge>}
+                            {invoice.claimPending && (
+                              <span className="ml-2">
+                                <Badge tone="amber">Transfer reported</Badge>
+                              </span>
+                            )}
                           </td>
-                          <td className={`${cell} text-right`}>
+                          <td className={`${cell} text-right whitespace-nowrap space-x-2`}>
+                            {invoice.status === 'issued' && invoice.dueUsd > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPaying(invoice);
+                                  setMessage('');
+                                }}
+                                className={primaryButton}
+                              >
+                                Pay
+                              </button>
+                            )}
                             <button type="button" onClick={() => setOpen(invoice)} className={secondaryButton}>
                               View / download
                             </button>
@@ -96,6 +118,22 @@ export const PortalPage: React.FC<{ token: string }> = ({ token }) => {
                 questions about an invoice or a payment, contact them directly.
               </p>
             </Card>
+
+            {paying && (
+              <PortalPayPanel
+                key={paying.id}
+                token={token}
+                exporterName={view.exporterName}
+                invoice={paying}
+                options={view.payment}
+                onPaid={(text) => {
+                  setMessage(text);
+                  setPaying(null);
+                  setVersion((value) => value + 1);
+                }}
+                onClose={() => setPaying(null)}
+              />
+            )}
 
             {open && (
               <div className="space-y-2">

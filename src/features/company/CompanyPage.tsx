@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, errorMessage, sendJson, type Company, type CompanyProfile } from '../../api/client';
 import type { BankDetails, ExporterDetails } from '../../types/invoice';
 import { Card, Field, Notice, Page, primaryButton } from '../../components/ui';
+import { PaymentGatewaySettings } from '../collections/PaymentGatewaySettings';
 
 const EXPORTER_FIELDS: Array<[keyof ExporterDetails, string]> = [
   ['companyName', 'Legal company name'],
@@ -139,6 +140,7 @@ export const CompanyPage: React.FC<Props> = ({ isAdmin, onSaved }) => {
           </fieldset>
         </form>
       )}
+      {isAdmin && <PaymentGatewaySettings />}
     </Page>
   );
 };
