@@ -129,7 +129,7 @@ async def main() -> int:
             result = await reset_demo_data(pool, organization_id)
             print(f"Reseeded {result['invoices']} demo invoices.")
         else:
-            print(f"Demo account ready: {DEMO_EMAIL}. Use --reset to wipe and reseed its data.")
+            print(f"Demo account ready: {DEMO_EMAIL} / {DEMO_PASSWORD}. Use --reset to wipe and reseed its data.")
         return 0
     finally:
         await pool.close()

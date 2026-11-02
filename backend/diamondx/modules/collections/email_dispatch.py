@@ -323,8 +323,7 @@ def build_router():
         try:
             email = parse_email_request(request.state.body)
         except InputError as error:
-            log.warning("Invalid send-email request: %s", error)
-            return JSONResponse({"error": "Invalid email request payload."}, status_code=400)
+            return JSONResponse({"error": str(error)}, status_code=400)
         result = await dispatch_email(request.app.state.pool, user, email, request.app.state.options.create_mail_transport)
         if not result.ok:
             return JSONResponse({"error": result.error}, status_code=result.status)
@@ -350,21 +349,14 @@ def build_router():
         try:
             settings = parse_smtp_settings(body(request))
         except InputError as error:
-            log.warning("Invalid SMTP settings payload received", exc_info=error)
-            return JSONResponse({"success": False, "error": "Invalid SMTP settings payload."}, status_code=400)
+            return JSONResponse({"success": False, "error": str(error)}, status_code=400)
         if not settings:
             return JSONResponse({"success": False, "error": "Host, Username, and Password are required."}, status_code=400)
         try:
             await request.app.state.options.create_mail_transport(settings).verify()
-        except Exception:
-            log.exception("SMTP verification failed")
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": "SMTP Connection failed. Verify host, port, and security credentials.",
-                },
-                status_code=400,
-            )
+        except Exception as error:
+            message = str(error) or "SMTP Connection failed. Verify host, port, and security credentials."
+            return JSONResponse({"success": False, "error": message}, status_code=400)
         return {"success": True, "message": "SMTP connection verified successfully."}
 
     return router
