@@ -55,7 +55,11 @@ export async function runMigrations(pool: DbPool, migrations = loadMigrations())
   const client = await pool.connect();
   const applied: string[] = [];
   try {
-    await client.query('SELECT pg_advisory_lock($1)', [MIGRATION_LOCK_ID]);
+    // One transaction with a transaction-scoped lock. A session-level advisory lock can be left
+    // behind forever when the database sits behind a transaction pooler (for example Neon's
+    // "-pooler" host), which makes every later start wait until the request times out.
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK_ID]);
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version TEXT PRIMARY KEY,
@@ -75,22 +79,24 @@ export async function runMigrations(pool: DbPool, migrations = loadMigrations())
         }
         continue;
       }
-      await client.query('BEGIN');
+      await client.query('SAVEPOINT migration');
       try {
         await client.query(migration.sql);
         await client.query('INSERT INTO schema_migrations (version, checksum) VALUES ($1, $2)', [
           migration.version,
           migration.checksum,
         ]);
-        await client.query('COMMIT');
+        await client.query('RELEASE SAVEPOINT migration');
         applied.push(migration.version);
       } catch (error) {
-        await client.query('ROLLBACK');
         throw new Error(`Migration ${migration.version} failed: ${(error as Error).message}`);
       }
     }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw error;
   } finally {
-    await client.query('SELECT pg_advisory_unlock($1)', [MIGRATION_LOCK_ID]).catch(() => undefined);
     client.release();
   }
   return applied;

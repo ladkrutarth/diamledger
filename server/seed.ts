@@ -92,6 +92,12 @@ export async function seedDemoUser(pool: DbPool): Promise<void> {
 }
 
 async function ensureDemoTeam(pool: DbPool, organizationId: string): Promise<void> {
+  // Runs on every serverless cold start, so skip the hashing and inserts when the team is already there.
+  const present = await pool.query<{ n: number }>(
+    'SELECT COUNT(*)::int AS n FROM users WHERE email = ANY($1::text[])',
+    [DEMO_TEAM.map((person) => person.email)],
+  );
+  if (present.rows[0].n >= DEMO_TEAM.length) return;
   const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 10);
   for (const person of DEMO_TEAM) {
     await pool.query(
