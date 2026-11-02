@@ -3,11 +3,20 @@ import helmet from 'helmet';
 
 export const CSP_DIRECTIVES: Record<string, string[]> = {
   'default-src': ["'self'"],
-  'script-src': ["'self'"],
+  // Razorpay Checkout: its script, the payment frame, and its logging endpoint.
+  'script-src': ["'self'", 'https://checkout.razorpay.com'],
   'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
   'font-src': ["'self'", 'data:', 'https://fonts.gstatic.com'],
-  'img-src': ["'self'", 'data:', 'blob:'],
-  'connect-src': ["'self'", 'https://*.ingest.sentry.io', 'https://*.ingest.us.sentry.io', 'https://*.ingest.de.sentry.io'],
+  'img-src': ["'self'", 'data:', 'blob:', 'https://cdn.razorpay.com'],
+  'connect-src': [
+    "'self'",
+    'https://*.ingest.sentry.io',
+    'https://*.ingest.us.sentry.io',
+    'https://*.ingest.de.sentry.io',
+    'https://api.razorpay.com',
+    'https://lumberjack.razorpay.com',
+  ],
+  'frame-src': ["'self'", 'https://api.razorpay.com', 'https://checkout.razorpay.com'],
   'worker-src': ["'self'", 'blob:'],
   'object-src': ["'none'"],
   'base-uri': ["'self'"],
@@ -54,7 +63,12 @@ export function jsonBodyParser(): RequestHandler {
     return parser;
   };
 
+  // Razorpay signs the exact bytes of a webhook, so that body is kept raw. This runs before reading
+  // req.body, because on Vercel reading it parses the body and the original bytes are lost.
+  const rawWebhook = express.raw({ type: () => true, limit: '1mb' });
+
   return (req, res, next) => {
+    if (req.path === '/api/billing/webhook' && !req.readableEnded) return rawWebhook(req, res, next);
     if (req.body !== undefined || req.readableEnded) return next();
     const documentUpload =
       /^\/api\/invoices\/[^/]+\/documents$/.test(req.path) || /^\/api\/requests\/[^/]+\/messages$/.test(req.path) ||

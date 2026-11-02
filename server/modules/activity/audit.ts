@@ -88,6 +88,9 @@ const RULES: Rule[] = [
   { method: 'PUT', pattern: new RegExp(`^/api/notices/${UUID}$`), action: 'notice.edit', entityType: 'notice', summary: (req) => `Updated notice ${req.body?.formType ?? ''} (${req.body?.status ?? 'open'})`.trim() },
   { method: 'DELETE', pattern: new RegExp(`^/api/notices/${UUID}$`), action: 'notice.delete', entityType: 'notice', summary: () => 'Deleted a notice' },
   { method: 'POST', pattern: new RegExp(`^/api/notices/${UUID}/draft-reply$`), action: 'notice.draft', entityType: 'notice', summary: () => 'Drafted a notice reply' },
+  { method: 'POST', pattern: /^\/api\/billing\/checkout$/, action: 'billing.checkout', entityType: 'billing', summary: (req) => `Started checkout for the ${req.body?.plan ?? ''} plan (${req.body?.cycle ?? ''})` },
+  { method: 'POST', pattern: /^\/api\/billing\/verify$/, action: 'billing.paid', entityType: 'billing', summary: () => 'Paid for a plan' },
+  { method: 'POST', pattern: /^\/api\/billing\/cancel$/, action: 'billing.cancel', entityType: 'billing', summary: () => 'Turned off plan renewal' },
   { method: 'PUT', pattern: new RegExp(`^/api/buyers/${UUID}/credit-limit$`), action: 'buyer.credit_limit', entityType: 'buyer', summary: (req) => (req.body?.creditLimitUsd ? `Set a buyer credit limit of USD ${req.body.creditLimitUsd}` : 'Removed a buyer credit limit') },
 ];
 

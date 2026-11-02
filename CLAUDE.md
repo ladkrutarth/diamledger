@@ -45,6 +45,12 @@ Server tests (`server/tests/*.test.ts`) start a throwaway Postgres via `embedded
 - A CA can belong to several companies and switch between them (`/api/workspace/switch`; `homeOrganizationId` vs `organizationId`). `charteredAccountantGuard` in `app.ts` blocks all CA writes except an explicit allowlist (logout, change password, workspace switch, assistant, invoice review, month close/open). New CA-writable endpoints must be added to that allowlist (it already covers requests, notices, and practice).
 - Closed months (`server/modules/tax/closedMonths.ts`, `monthIsClosed` in `taxShared.ts`) lock changes to data dated in that month; writes touching invoice/payment/bank/purchase/foreign-payment data should check this.
 
+### Subscriptions
+- `modules/billing/plans.ts` holds plan prices (INR, excl. 18% GST), limits, and `featureForPath` (path → plan feature). `subscriptionGuard` runs right after `charteredAccountantGuard`: a lapsed company (trial over, or paid period + 3 grace days over) gets 402 on every non-GET except `/api/auth|billing|health|workspace`, and gated feature paths return 402 `plan_feature`. `practice` is checked against the user's home (firm) company.
+- A company with no `organization_subscriptions` row gets a 14-day trial on first use (`loadSubscription`); tests rely on this, so new companies have every feature.
+- Limits (`limitMessage`) are checked when adding a team member, issuing an invoice (counts `invoices.issued_at` this month), and granting an outside accountant (counts the firm's client companies).
+- Razorpay goes through `modules/billing/razorpay.ts`; inject a fake with `AppOptions.razorpayFetch`. The webhook needs the raw body: `jsonBodyParser` sends `/api/billing/webhook` to `express.raw` before touching `req.body`.
+
 ### Data
 - Migrations: `db/migrations/NNN_name.sql`, applied in order inside a transaction, recorded with checksums in `schema_migrations`, guarded by an advisory lock. **Never edit an applied migration** — add the next number. Migrations must stay pooler-safe (the app runs against Neon/pgbouncer-style poolers).
 - Invoice line items live in the `invoices.data` JSON; denormalized columns (`status`, `total_usd`, `buyer_name`, …) exist for list/search/dashboard. Keep both in sync when saving (see `invoiceValidation.ts` `invoiceFacts`).
