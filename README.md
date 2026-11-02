@@ -64,6 +64,40 @@ erDiagram
 
 Sessions live in the `session` table. Rate-limit counters live in `rate_limits`. Applied SQL files are recorded in `schema_migrations`.
 
+### Assistant flow
+
+After sign-in the assistant opens once as a popup in the bottom-right corner. A round Assistant button in the same corner reopens it. Logging out resets this, so the next login opens it again.
+
+```mermaid
+sequenceDiagram
+  actor U as User
+  participant UI as Assistant popup
+  participant API as Express /api/assistant
+  participant AG as Agent (Gemini)
+  participant T as Read-only tools
+  participant DB as PostgreSQL
+
+  U->>UI: Logs in, popup opens
+  U->>UI: Asks a question
+  UI->>API: Message with session cookie
+  API->>AG: Question and company scope
+  loop Look up facts
+    AG->>T: Call a tool (invoices, payments, tax desk)
+    T->>DB: Read company data
+    DB-->>T: Rows
+    T-->>AG: Results
+  end
+  AG-->>API: Reply and optional proposed action
+  API->>API: Check every amount against looked-up data
+  API-->>UI: Reply, sources, proposal
+  U->>UI: Confirms the proposal
+  UI->>API: Confirm action
+  API->>DB: Re-check the books, then apply the change
+  API-->>UI: Result
+```
+
+Nothing changes in the books until the user confirms, and confirming checks the data again first.
+
 ## Features
 
 - Company accounts: invoices, buyers, and settings are shared by everyone in a company
@@ -79,7 +113,7 @@ Sessions live in the `session` table. Rate-limit counters live in `rate_limits`.
 - Invoice workspace with live A4 preview
 - PDF export
 - AI parcel manifest parsing (Gemini)
-- Tax and invoice assistant (Gemini). It answers from the company's own invoices, payments, and tax desk (deadlines, GSTR-1 filing check, export register, FEMA realization, forex, unmatched bank credits) through read-only tools. Every amount in a reply is checked against the data it looked up; an answer with an amount that is not there is flagged. It can propose a payment, a reminder draft, a bank-line match the matcher already suggests, or, for a chartered accountant, closing a month whose filing check is clean. Nothing changes until the user confirms, and confirming checks the books again first.
+- Tax and invoice assistant (Gemini), shown as a bottom-right popup that opens on login. It answers from the company's own invoices, payments, and tax desk (deadlines, GSTR-1 filing check, export register, FEMA realization, forex, unmatched bank credits) through read-only tools. Every amount in a reply is checked against the data it looked up; an answer with an amount that is not there is flagged. It can propose a payment, a reminder draft, a bank-line match the matcher already suggests, or, for a chartered accountant, closing a month whose filing check is clean. Nothing changes until the user confirms, and confirming checks the books again first.
 - Month review. For a chosen month, the assistant gathers the filing check, export register, realization, forex, and bank lines, proposes strong bank matches and a month close where they are safe, and summarises the result. The proposals come from code, not the model; if the model's summary is unavailable or mentions an amount that is not in the findings, a summary written from the findings is shown instead.
 - Tally Prime XML and SAP payload generation
 - SMTP email dispatch
