@@ -248,29 +248,6 @@ Code is grouped by feature. Each server module owns its routes, SQL, and rules; 
 | Plan & billing | `modules/billing` | `features/billing` | `/api/billing/*` |
 | Assistant | `assistant/` | `features/assistant` | `/api/assistant/*` |
 
----
-
-## Roles and permissions
-
-| | Admin | Member | Tax desk | CA |
-| --- | :---: | :---: | :---: | :---: |
-| Create and issue invoices, record payments | ✓ | ✓ | ✓ | |
-| Company profile, team, delete and cancel | ✓ | | | |
-| Buyer credit limits | ✓ | | | |
-| Tax desk: view registers, checks, 3CD pack | ✓ | | ✓ | ✓ |
-| Tax desk: record purchases, TDS, imports | ✓ | ✓ ¹ | ✓ | |
-| Delete purchases, payments abroad, notices | ✓ | | ✓ | |
-| Review invoices, close and reopen months | | | | ✓ |
-| Notices: log, edit, draft replies | ✓ | | ✓ | ✓ |
-| Requests: ask and reply | ✓ | ✓ | ✓ | ✓ |
-| Practice (across client companies) | Anyone with access to at least one client company | | | |
-| Choose, pay for, or cancel the plan | ✓ | | | |
-
-¹ Allowed by the API; the tax desk screens are shown to admin, tax, and CA users.
-
-A CA account is read-only except for an explicit list in `app.ts`: invoice review, month close and open, requests, notices, practice, the assistant, and switching company. A company gives an outside firm access from **Team → Outside accountants**.
-
----
 
 ## Data model
 
