@@ -1,6 +1,5 @@
 node_modules
 dist
-dist-server
 .devpg
 .github
 .git
@@ -14,7 +13,6 @@ coverage
 .vscode
 .idea
 *.md
-bun.lock
 backend/.venv
 backend/.pytest_cache
 **/__pycache__
